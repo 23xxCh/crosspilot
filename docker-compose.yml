@@ -1,0 +1,13 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./keys.json:/app/keys.json:ro
+      - ./data:/app/data
+      - ./亚马逊表:/app/亚马逊表:ro
+    environment:
+      - CROSSPILOT_DATA_DIR=/app/data
+      - CROSSPILOT_KEYS_PATH=/app/keys.json
+    restart: unless-stopped

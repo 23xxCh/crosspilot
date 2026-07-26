@@ -1,0 +1,34 @@
+name: Test
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Compile check all Python files
+        run: |
+          find scripts -name "*.py" -exec uv run python -m py_compile {} \;
+          find web -name "*.py" -not -name "__init__.py" -exec uv run python -m py_compile {} \;
+
+      - name: Run tests (no network)
+        run: uv run pytest tests/ -v -m "not network" --tb=short

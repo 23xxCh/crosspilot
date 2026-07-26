@@ -1,0 +1,42 @@
+# Excel 锁文件
+~\$*.xlsx
+
+# API keys（真实密钥不入库，参考 keys.example.json）
+keys.json
+agnes_key.txt
+
+# Python 缓存
+__pycache__/
+*.pyc
+.venv/
+
+# 运行产物
+*_status.json
+*_cache.json
+*.log
+
+# Web 运行时数据（SQLite + 上传文件 + 清洗输出）
+data/uploads/
+data/cache/
+data/tasks.db*
+data/*.log
+data/server.log
+*_cleaned.xlsx
+
+# 图生图临时目录
+generated_images/
+
+# IDE
+.vscode/
+.idea/
+
+# PyInstaller
+dist/
+build/
+*.spec
+
+# Update artifacts
+_update/
+*.xlsx
+!data/sample_small.xlsx
+亚马逊表/
