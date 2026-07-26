@@ -1,5 +1,8 @@
-"""自动更新：检测同目录或 _update 子目录下的新版本 exe，有则替换后重启。"""
-import os, sys, json, shutil, time
+"""本地更新：校验 _update/new 目录中的新版本，再由辅助进程替换并重启。"""
+import hashlib
+import os
+import subprocess
+import sys
 from web import __version__
 
 
@@ -9,6 +12,46 @@ def _parse_version(v):
         return tuple(int(x) for x in v.lstrip('v').split('.')[:3])
     except Exception:  # 版本号解析失败，返回默认值
         return (0, 0, 0)
+
+
+def _signature_required():
+    return os.name == 'nt' and bool(getattr(sys, 'frozen', False))
+
+
+def _authenticode_thumbprint(path):
+    """Return a valid Authenticode signer thumbprint, or an empty string."""
+    if os.name != 'nt':
+        return ''
+    env = os.environ.copy()
+    env['CROSSPILOT_SIGNATURE_PATH'] = path
+    script = (
+        "$s=Get-AuthenticodeSignature -LiteralPath $env:CROSSPILOT_SIGNATURE_PATH;"
+        "if($s.Status -eq 'Valid' -and $s.SignerCertificate){"
+        "$s.SignerCertificate.Thumbprint}"
+    )
+    try:
+        result = subprocess.run(
+            ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=env,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    return result.stdout.strip().upper() if result.returncode == 0 else ''
+
+
+def _has_matching_signature(candidate):
+    current_thumbprint = _authenticode_thumbprint(sys.executable)
+    candidate_thumbprint = _authenticode_thumbprint(candidate)
+    return bool(
+        current_thumbprint
+        and candidate_thumbprint
+        and current_thumbprint == candidate_thumbprint
+    )
 
 
 def check_for_update(exe_dir=None):
@@ -32,31 +75,69 @@ def check_for_update(exe_dir=None):
                 candidate_ver = _parse_version(f.read().strip())
         except Exception:  # version.txt 读取失败
             candidate_ver = (0, 0, 0)
-        if candidate_ver > current:
+        checksum_file = candidate + '.sha256'
+        try:
+            with open(checksum_file, encoding='ascii') as f:
+                expected = f.read().strip().split()[0].lower()
+            with open(candidate, 'rb') as f:
+                actual = hashlib.file_digest(f, 'sha256').hexdigest()
+            with open(candidate, 'rb') as f:
+                is_pe = f.read(2) == b'MZ'
+        except (OSError, IndexError):
+            continue
+        signature_ok = not _signature_required() or _has_matching_signature(candidate)
+        if candidate_ver > current and is_pe and expected == actual and signature_ok:
             return {'version': f"v{candidate_ver[0]}.{candidate_ver[1]}.{candidate_ver[2]}", 'path': candidate}
     return None
 
 
 def apply_update(update_path):
-    """替换当前 exe 为新版本，写批处理脚本在下次启动时完成替换。
-    返回 True 表示已准备好（下次启动自动替换）。"""
+    """启动受控辅助脚本，等待当前进程退出后替换 exe 并重新启动。"""
+    if os.name != 'nt' or not getattr(sys, 'frozen', False):
+        return False
     current_exe = sys.executable
     if not current_exe or not os.path.exists(current_exe):
         return False
     target_dir = os.path.dirname(current_exe)
     target_name = os.path.basename(current_exe)
+    update_path = os.path.realpath(update_path)
+    allowed_dirs = [
+        os.path.realpath(os.path.join(target_dir, '_update')),
+        os.path.realpath(os.path.join(target_dir, 'new')),
+    ]
+    if not any(os.path.commonpath([update_path, d]) == d for d in allowed_dirs):
+        return False
+    verified = check_for_update(target_dir)
+    if not verified or os.path.realpath(verified['path']) != update_path:
+        return False
 
-    # 写替换脚本（Windows batch）
     bat = os.path.join(target_dir, '_update.bat')
-    with open(bat, 'w') as f:
+    old_path = os.path.join(target_dir, target_name)
+    with open(bat, 'w', encoding='utf-8', newline='\r\n') as f:
         f.write(f"""@echo off
-timeout /t 2 /nobreak >nul
-move /Y "{target_name}" "{target_name}.old" 2>nul
-move /Y "{update_path}" "{os.path.join(target_dir, target_name)}"
-if exist "{os.path.join(target_dir, target_name)}" start "" "{os.path.join(target_dir, target_name)}"
-del "{target_name}.old" 2>nul
+setlocal
+del /Q "{old_path}.old" >nul 2>&1
+for /L %%i in (1,1,30) do (
+  move /Y "{old_path}" "{old_path}.old" >nul 2>&1 && goto replace
+  timeout /t 1 /nobreak >nul
+)
+exit /b 1
+:replace
+move /Y "{update_path}" "{old_path}" >nul 2>&1
+if not exist "{old_path}" (
+  move /Y "{old_path}.old" "{old_path}" >nul 2>&1
+  exit /b 1
+)
+start "" "{old_path}"
+del /Q "{old_path}.old" >nul 2>&1
 del "%~f0"
 """)
+    subprocess.Popen(
+        ['cmd.exe', '/c', bat],
+        cwd=target_dir,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+        close_fds=True,
+    )
     return True
 
 

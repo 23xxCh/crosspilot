@@ -21,6 +21,7 @@ data/cache/
 data/tasks.db*
 data/*.log
 data/server.log
+data/queue-manager.lock
 *_cleaned.xlsx
 
 # 图生图临时目录
@@ -29,6 +30,11 @@ generated_images/
 # IDE
 .vscode/
 .idea/
+
+# Local agent/tooling notes
+.claude/
+.context/
+.scratch/
 
 # PyInstaller
 dist/
@@ -40,3 +46,4 @@ _update/
 *.xlsx
 !data/sample_small.xlsx
 亚马逊表/
+图片和翻译文件/

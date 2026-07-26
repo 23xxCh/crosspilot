@@ -74,13 +74,11 @@ class TestErrorPaths:
         with pytest.raises(FileNotFoundError):
             process_ebay_tk._main('/nonexistent/path.xlsx')
 
-    @pytest.mark.network
     def test_unrecognized_format_raises(self, invalid_xlsx_path):
         """不识格式 → ValueError。"""
         with pytest.raises(ValueError, match='不认识的表格格式'):
             process_ebay_tk._main(invalid_xlsx_path)
 
-    @pytest.mark.network
     def test_header_mismatch_raises(self, header_mismatch_xlsx_path):
         """能识格式但 col 15 header 不符 → ValueError。"""
         with pytest.raises(ValueError, match='表头结构'):
@@ -114,46 +112,53 @@ class TestTranslateText:
     """translate_text 中文检测：必须返回无中文内容，否则重试 + 警告。"""
 
     def test_translate_pure_chinese_retries(self, monkeypatch):
-        """API 始终返回原文（仍含中文）→ 3 次重试后保留原文 + WARN 日志。"""
-        def mock_no_translate(payload, **kw):
-            return payload['messages'][0]['content'].split(': ', 1)[-1]
-        monkeypatch.setattr(process_ebay_tk._translate_svc, 'dmx_call', mock_no_translate)
+        """API 始终返回原文（仍含中文）→ 重试后保留原文 + WARN 日志。"""
+        from unittest.mock import Mock
+        mock_provider = Mock()
+        mock_provider.call_text.return_value = "这是汽车配件"  # 返回原文（含中文）
+        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
         result = process_ebay_tk.translate_text("这是汽车配件", process_ebay_tk.TITLE_TRANSLATE_PROMPT)
         assert process_ebay_tk._CHINESE_RE.search(result), f"应保留中文, got: {result}"
 
     def test_translate_timeout_retries(self, monkeypatch):
-        """API 超时（返回 None）→ 3 次重试后保留原文。"""
-        monkeypatch.setattr(process_ebay_tk._translate_svc, 'dmx_call', lambda *a, **kw: None)
+        """API 超时（返回 None）→ 保留原文。"""
+        from unittest.mock import Mock
+        mock_provider = Mock()
+        mock_provider.call_text.return_value = None
+        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
         result = process_ebay_tk.translate_text("这是产品", process_ebay_tk.TITLE_TRANSLATE_PROMPT)
         assert process_ebay_tk._CHINESE_RE.search(result)
 
-    def test_translate_pure_english_skips_api(self, monkeypatch):
-        """纯英文输入（无中文）→ 不调 API 直接返回原文。"""
-        def mock_should_not_call(*a, **kw):
-            raise AssertionError("纯英文不应调 API")
-        monkeypatch.setattr(process_ebay_tk._translate_svc, 'dmx_call', mock_should_not_call)
+    def test_translate_pure_english_to_target_language(self, monkeypatch):
+        """目标是越南语时，英文商品标题也必须翻译。"""
+        from unittest.mock import Mock
+        mock_provider = Mock()
+        mock_provider.call_text.return_value = "Phụ kiện ô tô 2024"
+        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
         result = process_ebay_tk.translate_text("Car Accessories 2024", process_ebay_tk.TITLE_TRANSLATE_PROMPT)
-        assert result == "Car Accessories 2024"
+        assert result == "Phụ kiện ô tô 2024"
+        mock_provider.call_text.assert_called_once()
 
     def test_translate_partial_vn_with_cn_still_keeps_cn(self, monkeypatch):
-        """API 返回部分翻译（含中文残留）→ 重试后保留。"""
-        def mock_partial(payload, **kw): return "Sản phẩm 汽车 用品"
-        monkeypatch.setattr(process_ebay_tk._translate_svc, 'dmx_call', mock_partial)
+        """API 返回部分翻译（含中文残留）→ 保留。"""
+        from unittest.mock import Mock
+        mock_provider = Mock()
+        mock_provider.call_text.return_value = "Sản phẩm 汽车 用品"
+        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
         result = process_ebay_tk.translate_text("这是产品", process_ebay_tk.TITLE_TRANSLATE_PROMPT)
         assert process_ebay_tk._CHINESE_RE.search(result)
 
-    def test_chinese_input_uses_chinese_specific_prompt(self, monkeypatch):
-        """中文输入必须用专用 prompt（明确要求中文→越南语），不能走通用模板。"""
-        captured_payloads = []
-        def mock_capture(payload, **kw):
-            captured_payloads.append(payload)
-            return "Sản phẩm ô tô"  # 返回干净越南语
-        monkeypatch.setattr(process_ebay_tk._translate_svc, 'dmx_call', mock_capture)
-        process_ebay_tk.translate_text("通用型汽车配件", process_ebay_tk.TITLE_TRANSLATE_PROMPT)
-        assert len(captured_payloads) > 0
-        prompt_text = captured_payloads[0]['messages'][0]['content']
+    def test_chinese_input_uses_chinese_specific_prompt(self):
+        """中文输入必须用专用 prompt（明确要求中文→越南语），不能走通用模板。
+
+        注意：这个测试验证 prompt 选择逻辑，不实际调用 API。
+        """
+        # 直接测试 _select_prompt 方法
+        text = "通用型汽车配件"
+        default_prompt = "Translate: {}"
+        result = process_ebay_tk._select_prompt(text, default_prompt)
         # 中文专用 prompt 提到 "Chinese (中文)"
-        assert "Chinese (中文)" in prompt_text or "Chinese" in prompt_text
+        assert "Chinese (中文)" in result or "Chinese" in result
 
 
 class TestBatch:
@@ -166,7 +171,10 @@ class TestBatch:
 
     def test_batch_translate_partial_json(self, monkeypatch):
         """JSON 解析容错：API 返回不完整响应，不抛异常。"""
-        monkeypatch.setattr(process_ebay_tk._translate_svc, 'dmx_call', lambda *a, **kw: 'NOT JSON')
+        from unittest.mock import Mock
+        mock_provider = Mock()
+        mock_provider.call_text.return_value = 'NOT JSON'
+        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
         result = process_ebay_tk.batch_translate_texts(["test text"])
         assert result == {}  # 解析失败返回空
 
@@ -193,6 +201,10 @@ class TestRuleStripBrands:
     def test_no_brand_unchanged(self):
         result = process_ebay_tk.rule_strip_brands("Car Phone Holder Universal Mount")
         assert result == "Car Phone Holder Universal Mount"
+
+    def test_brand_substrings_do_not_corrupt_words(self):
+        result = process_ebay_tk.rule_strip_brands("Affordable audio adapter for Ford")
+        assert result == "Affordable audio adapter for"
 
     def test_empty_input(self):
         assert process_ebay_tk.rule_strip_brands("") == ""

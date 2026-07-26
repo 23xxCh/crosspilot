@@ -5,23 +5,32 @@ import os, sys, traceback
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'scripts'))
 
-import process_ebay_tk  # noqa: E402
 
-
-def main():
-    if len(sys.argv) < 2:
-        print("用法: python runner.py <input.xlsx>", file=sys.stderr)
-        sys.exit(2)
-    input_path = sys.argv[1]
+def run_pipeline(pipeline, input_path):
+    """运行一个管道并返回进程退出码。"""
     try:
-        process_ebay_tk._main(input_path)
-    except Exception:  # 管道崩溃，已写 _child_error.txt
-        # 崩溃写错误文件，主进程 monitor 探活会发现 exit 非0
+        if pipeline == 'amazon':
+            import process_amazon as p
+            p._main(input_path)
+        elif pipeline == 'ebay':
+            import process_ebay_tk as p
+            p._main(input_path)
+        else:
+            raise ValueError(f"未知管道: {pipeline}")
+        return 0
+    except Exception:
         err = os.path.splitext(input_path)[0] + '_child_error.txt'
         with open(err, 'w', encoding='utf-8') as f:
             f.write(traceback.format_exc())
         traceback.print_exc()
-        sys.exit(1)
+        return 1
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("用法: python runner.py <pipeline> <input_path>", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(run_pipeline(sys.argv[1], sys.argv[2]))
 
 
 if __name__ == '__main__':

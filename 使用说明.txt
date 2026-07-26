@@ -1,0 +1,23 @@
+CrossPilot — 跨境电商 Listing 全自动清洗平台
+=============================================
+
+用法：
+  1. 双击 CrossPilot.exe
+  2. 浏览器会自动打开 http://localhost:8765
+  3. 首次使用：点击左侧「设置」，填入 API key 后保存
+  4. 回到首页，拖入 .xlsx 或 Amazon 列式 .json 文件即可开始处理
+
+支持平台：
+  eBay   → TikTok Shop 表格清洗（删除人物附图 + 主图/变种去水印和人物 + 翻译越南语）
+  Amazon → XLSX/JSON 回填生成（标题优化 + 描述精简 + Bullet Point + 关键词）
+
+结果输出：
+  处理完成后点击「下载」获取 _cleaned.xlsx / _回填.xlsx / 回填 JSON
+
+API key 获取：
+  DMXAPI（文本翻译）：https://www.dmxapi.cn 注册免费
+  Agnes（图审 + 生图）：联系管理员获取 TokenPlan key
+
+注意：
+  首次运行会在 C:\Users\<用户名>\AppData\Roaming\CrossPilot 创建数据目录
+  请勿移动或删除该目录下的 keys.json

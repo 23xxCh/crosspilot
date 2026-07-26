@@ -1,6 +1,22 @@
 """Test fixtures: shared across all pipeline tests."""
-import os, sys, json, shutil
+import atexit
+import os, sys, json, shutil, tempfile
 import pytest
+
+# Tests must never touch the real task database, uploads, cache, or API keys.
+_TEST_RUNTIME_DIR = tempfile.mkdtemp(prefix='crosspilot-tests-')
+_TEST_KEYS_PATH = os.path.join(_TEST_RUNTIME_DIR, 'keys.json')
+os.environ['CROSSPILOT_DATA_DIR'] = _TEST_RUNTIME_DIR
+os.environ['CROSSPILOT_KEYS_PATH'] = _TEST_KEYS_PATH
+with open(_TEST_KEYS_PATH, 'w', encoding='utf-8') as _keys_file:
+    json.dump({
+        'text_provider': 'deepseek',
+        'vision_provider': 'agnes',
+        'image_gen_provider': 'agnes',
+        'deepseek_key': 'test-deepseek-key',
+        'agnes_key': 'test-agnes-key'
+    }, _keys_file)
+atexit.register(lambda: shutil.rmtree(_TEST_RUNTIME_DIR, ignore_errors=True))
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 import process_ebay_tk

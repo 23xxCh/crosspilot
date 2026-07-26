@@ -4,6 +4,9 @@ on:
   push:
     tags: ['v*']
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -20,13 +23,50 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Release preflight
+        run: uv run python scripts/release_preflight.py --tag "${{ github.ref_name }}" --require-tracked
+
+      - name: Run tests
+        run: uv run pytest tests/ -q -m "not network"
+
       - name: Build with PyInstaller
         run: uv run pyinstaller --onefile --name CrossPilot --add-data "web/static:web/static" --add-data "web/runner.py:web" --add-data "scripts:scripts" --add-data "keys.example.json:." main_cli.py
+
+      - name: Sign executable
+        shell: pwsh
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERT_BASE64 -or -not $env:WINDOWS_CERT_PASSWORD) {
+            throw "WINDOWS_CERT_BASE64 and WINDOWS_CERT_PASSWORD release secrets are required"
+          }
+          $certPath = Join-Path $env:RUNNER_TEMP "crosspilot-signing.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+            Where-Object FullName -Match '\\x64\\' |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signTool) { throw "signtool.exe was not found" }
+          & $signTool.FullName sign /f $certPath /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 dist/CrossPilot.exe
+          if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed" }
+          $signature = Get-AuthenticodeSignature dist/CrossPilot.exe
+          if ($signature.Status -ne 'Valid') { throw "Invalid Authenticode signature: $($signature.Status)" }
+          Remove-Item -LiteralPath $certPath -Force
+
+      - name: Create update metadata
+        shell: pwsh
+        run: |
+          "${{ github.ref_name }}".TrimStart('v') | Set-Content -NoNewline dist/version.txt
+          (Get-FileHash dist/CrossPilot.exe -Algorithm SHA256).Hash.ToLower() | Set-Content -NoNewline dist/CrossPilot.exe.sha256
 
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/CrossPilot.exe
+          files: |
+            dist/CrossPilot.exe
+            dist/CrossPilot.exe.sha256
+            dist/version.txt
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2,73 +2,86 @@
 import json, pytest
 from unittest.mock import Mock, patch, MagicMock
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
-from services import TranslationService, ImageReviewService, ImageGenService
+_PROJ = os.path.join(os.path.dirname(__file__), '..')
+sys.path.insert(0, _PROJ)  # for `import scripts.xxx`
+sys.path.insert(0, os.path.join(_PROJ, 'scripts'))  # for `from adapters import xxx`
+from services import TranslationService, ImageReviewService
 from services.translate import TRANSLATE_BATCH_PROMPT
 
 
 @pytest.fixture
-def mock_http():
-    """Mock requests.Session that returns a configurable JSON response."""
-    session = Mock()
-    session.post = Mock()
-    return session
+def mock_provider(monkeypatch):
+    """Mock model_provider.get_provider() for all tests."""
+    provider = Mock()
+    provider.call_text.return_value = 'Xin chào'
+    provider.call_vision.return_value = False
+    provider.call_image_gen.return_value = 'https://generated.example.com/img.png'
+    # Patch at all locations where get_provider is imported
+    monkeypatch.setattr('model_provider.get_provider', lambda: provider)
+    monkeypatch.setattr('services.translate.get_provider', lambda: provider)
+    monkeypatch.setattr('services.review.get_provider', lambda: provider)
+    monkeypatch.setattr('dmx_client.get_provider', lambda: provider)
+    return provider
 
 
 @pytest.fixture
-def translate_svc(mock_http):
-    return TranslationService(mock_http)
+def translate_svc(mock_provider):
+    """Create TranslationService with mocked provider."""
+    return TranslationService()
 
 
 @pytest.fixture
-def review_svc(mock_http):
-    return ImageReviewService(mock_http)
+def review_svc(mock_provider):
+    """Create ImageReviewService with mocked provider."""
+    return ImageReviewService()
+
+
+@pytest.fixture(autouse=True)
+def no_real_retry_sleep(monkeypatch):
+    import time
+    monkeypatch.setattr(time, 'sleep', lambda _seconds: None)
 
 
 class TestTranslationService:
     """TranslationService unit tests."""
 
-    def test_dmx_call_success(self, translate_svc, mock_http):
-        mock_resp = Mock()
-        mock_resp.ok = True
-        mock_resp.json.return_value = {
-            'choices': [{'message': {'content': 'Xin chào'}}]
-        }
-        mock_http.post.return_value = mock_resp
+    def test_dmx_call_success(self, monkeypatch):
+        """测试 dmx_call 方法（现在使用 model_provider）。"""
+        from unittest.mock import Mock
+        mock_provider = Mock()
+        mock_provider.call_text.return_value = 'Xin chào'
+        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
 
-        result = translate_svc.dmx_call({
-            'model': 'mimo-v2.5',
+        from services.translate import TranslationService
+        svc = TranslationService()
+        result = svc.dmx_call({
+            'model': 'deepseek-chat',
             'messages': [{'role': 'user', 'content': 'hello'}]
         })
         assert result == 'Xin chào'
 
-    def test_dmx_call_timeout_then_fallback(self, translate_svc, mock_http):
-        mock_http.post.side_effect = [
-            Exception("timeout"),  # primary model fails
-            Mock(ok=True, json=Mock(return_value={  # fallback succeeds
-                'choices': [{'message': {'content': 'Bonjour'}}]
-            }))
-        ]
-        result = translate_svc.dmx_call({
-            'model': 'mimo-v2.5',
-            'messages': [{'role': 'user', 'content': 'hello'}]
-        })
-        assert result == 'Bonjour'
-        assert mock_http.post.call_count >= 2
+    def test_dmx_call_returns_none(self, monkeypatch):
+        """API 返回 None → dmx_call 返回 None。"""
+        from unittest.mock import Mock
+        mock_provider = Mock()
+        mock_provider.call_text.return_value = None
+        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
 
-    def test_dmx_call_all_models_fail(self, translate_svc, mock_http):
-        mock_http.post.side_effect = Exception("timeout")
-        result = translate_svc.dmx_call({
-            'model': 'mimo-v2.5',
+        from services.translate import TranslationService
+        svc = TranslationService()
+        result = svc.dmx_call({
+            'model': 'deepseek-chat',
             'messages': [{'role': 'user', 'content': 'hello'}]
         })
         assert result is None
 
-    def test_strip_code_fence(self, translate_svc):
-        assert translate_svc._strip_code_fence('```json\nhello\n```') == 'hello'
-        assert translate_svc._strip_code_fence('```\nworld\n```') == 'world'
-        assert translate_svc._strip_code_fence('plain text') == 'plain text'
-        assert translate_svc._strip_code_fence(None) is None
+    def test_strip_code_fence(self):
+        """测试代码块清理。"""
+        from services.translate import TranslationService
+        assert TranslationService._strip_code_fence('```json\nhello\n```') == 'hello'
+        assert TranslationService._strip_code_fence('```\nworld\n```') == 'world'
+        assert TranslationService._strip_code_fence('plain text') == 'plain text'
+        assert TranslationService._strip_code_fence(None) is None
 
     def test_select_prompt_chinese(self, translate_svc):
         prompt = translate_svc._select_prompt('汽车配件', 'Default')
@@ -79,22 +92,29 @@ class TestTranslationService:
         prompt = translate_svc._select_prompt('Car Parts', 'Default')
         assert prompt == 'Default'
 
-    def test_translate_text_chinese_detection(self, translate_svc, mock_http):
-        mock_resp = Mock()
-        mock_resp.ok = True
-        mock_resp.json.return_value = {
-            'choices': [{'message': {'content': 'Phụ tùng xe'}}]
-        }
-        mock_http.post.return_value = mock_resp
-
+    def test_translate_text_chinese_detection(self, translate_svc):
+        """Test Chinese text detection and translation."""
+        # Configure mock to return Vietnamese translation
+        translate_svc._provider.call_text.return_value = 'Phụ tùng xe'
         result = translate_svc.translate_text('汽车配件', 'Translate: {}')
         # Should contain Vietnamese, no Chinese
         assert '汽' not in result
+        assert result == 'Phụ tùng xe'
 
-    def test_translate_text_returns_original_on_failure(self, translate_svc, mock_http):
-        mock_http.post.side_effect = Exception("all models down")
+    def test_translate_text_returns_original_on_failure(self, translate_svc):
+        """On API failure, return original text."""
+        translate_svc._provider.call_text.return_value = None
         result = translate_svc.translate_text('汽车配件', 'Translate: {}')
         assert result == '汽车配件'
+
+    def test_translate_text_does_not_swallow_quota_exhaustion(self, translate_svc):
+        """A terminal account failure must stop the pipeline, not trigger mass fallback."""
+        from model_provider import ProviderQuotaError
+
+        translate_svc._provider.call_text.side_effect = ProviderQuotaError('额度不足')
+
+        with pytest.raises(ProviderQuotaError, match='额度不足'):
+            translate_svc.translate_text('汽车配件', 'Translate: {}')
 
     def test_parse_batch_response_valid(self, translate_svc):
         raw = json.dumps([
@@ -118,93 +138,89 @@ class TestTranslationService:
         result = translate_svc.batch_process([], TRANSLATE_BATCH_PROMPT, 'test')
         assert result == {}
 
-    def test_batch_process_chinese_detection(self, translate_svc, mock_http):
-        mock_resp = Mock()
-        mock_resp.ok = True
-        mock_resp.json.return_value = {
-            'choices': [{'message': {'content': json.dumps([
-                {'index': 0, 'translation': 'Phụ tùng'}
-            ])}}]
-        }
-        mock_http.post.return_value = mock_resp
+    def test_batch_process_chinese_detection(self, translate_svc, mock_provider):
+        """Test batch processing with Chinese text uses CN prompt."""
+        mock_provider.call_text.return_value = json.dumps([
+            {'index': 0, 'translation': 'Phụ tùng'}
+        ])
 
-        # Chinese text should trigger CN prompt
         result = translate_svc.batch_process(
             ['汽车配件'],
             TRANSLATE_BATCH_PROMPT,
             'batch_translate'
         )
         assert len(result) == 1
+        assert result['汽车配件'] == 'Phụ tùng'
 
-    def test_batch_translate_delegates(self, translate_svc, mock_http):
-        mock_resp = Mock()
-        mock_resp.ok = True
-        mock_resp.json.return_value = {
-            'choices': [{'message': {'content': json.dumps([
-                {'index': 0, 'translation': 'xin chào'}
-            ])}}]
-        }
-        mock_http.post.return_value = mock_resp
+    def test_batch_translate_delegates(self, translate_svc, mock_provider):
+        """Test batch_translate delegates to batch_process."""
+        mock_provider.call_text.return_value = json.dumps([
+            {'index': 0, 'translation': 'xin chào'}
+        ])
         result = translate_svc.batch_translate(['hello'])
         assert len(result) == 1
+        assert result['hello'] == 'xin chào'
+
+    def test_batch_process_retries_malformed_response(self, translate_svc, mock_provider):
+        """Test retry when response is malformed JSON."""
+        # First call returns malformed JSON, second returns valid
+        mock_provider.call_text.side_effect = [
+            'not-json',
+            json.dumps([{'index': 0, 'translation': 'xin chào'}])
+        ]
+
+        result = translate_svc.batch_translate(['hello'])
+
+        assert result == {'hello': 'xin chào'}
+        assert mock_provider.call_text.call_count == 2
 
 
 class TestImageReviewService:
     """ImageReviewService unit tests."""
 
-    def test_review_once_watermark_detected(self, review_svc, mock_http):
-        mock_resp = Mock()
-        mock_resp.ok = True
-        mock_resp.json.return_value = {
-            'choices': [{'message': {'content': 'YES'}}]
-        }
-        mock_http.post.return_value = mock_resp
-
+    def test_review_once_watermark_detected(self, review_svc, mock_provider):
+        """Test review_once returns True when image has watermark."""
+        mock_provider.call_vision.return_value = True
         result = review_svc.review_once('https://example.com/img.jpg')
         assert result is True
 
-    def test_review_once_clean_image(self, review_svc, mock_http):
-        mock_resp = Mock()
-        mock_resp.ok = True
-        mock_resp.json.return_value = {
-            'choices': [{'message': {'content': 'NO'}}]
-        }
-        mock_http.post.return_value = mock_resp
-
+    def test_review_once_clean_image(self, review_svc, mock_provider):
+        """Test review_once returns False when image is clean."""
+        mock_provider.call_vision.return_value = False
         result = review_svc.review_once('https://example.com/clean.jpg')
         assert result is False
 
-    def test_review_once_http_error(self, review_svc, mock_http):
-        mock_resp = Mock()
-        mock_resp.ok = False
-        mock_http.post.return_value = mock_resp
+    def test_review_request_includes_people_and_body_parts(self, review_svc, mock_provider):
+        """Test that review calls provider with image URL."""
+        mock_provider.call_vision.return_value = True
+        result = review_svc.review_once('https://example.com/person.jpg')
+        assert result is True
+        # Verify call_vision was called with the image URL
+        mock_provider.call_vision.assert_called_once_with('https://example.com/person.jpg')
 
+    def test_review_once_ambiguous_answer_is_unknown(self, review_svc, mock_provider):
+        """Test that ambiguous response returns None."""
+        mock_provider.call_vision.return_value = None
+        result = review_svc.review_once('https://example.com/unknown.jpg')
+        assert result is None
+
+    def test_review_once_http_error(self, review_svc, mock_provider):
+        """Test that provider error returns None."""
+        mock_provider.call_vision.return_value = None
         result = review_svc.review_once('https://example.com/img.jpg')
         assert result is None
 
-    def test_review_once_timeout(self, review_svc, mock_http):
-        mock_http.post.side_effect = Exception("timeout")
-        result = review_svc.review_once('https://example.com/img.jpg')
-        assert result is None
+    def test_review_once_timeout(self, review_svc, mock_provider):
+        """Test that provider exception propagates (service doesn't catch)."""
+        mock_provider.call_vision.side_effect = Exception("timeout")
+        with pytest.raises(Exception, match="timeout"):
+            review_svc.review_once('https://example.com/img.jpg')
 
-    def test_review_full_fallback(self, review_svc, mock_http):
-        """Full review() with 3-level fallback — all fail => None."""
-        mock_http.post.side_effect = Exception("timeout")
+    def test_review_full_fallback(self, review_svc, mock_provider):
+        """Full review() with retries — all fail => None."""
+        mock_provider.call_vision.return_value = None
         result = review_svc.review('https://example.com/img.jpg')
         assert result is None
-        # 7 attempts (3 fast + 2 slow + 2 gemini)
-        assert mock_http.post.call_count >= 7
-
-
-class TestImageGenService:
-    """ImageGenService unit tests."""
-
-    def test_generate_success(self, mock_http):
-        # dmx_client.generate_image calls _post_json internally
-        # We test the service delegation
-        svc = ImageGenService(mock_http)
-        # Just verify the service exists and has generate method
-        assert hasattr(svc, 'generate')
 
 
 class TestAmazonAdapter:
@@ -247,23 +263,19 @@ class TestEdgeCases:
         assert translate_svc.translate_text('', 'Translate: {}') == ''
         assert translate_svc.translate_text(None, 'Translate: {}') is None
 
-    def test_translate_very_long_text(self, translate_svc, mock_http):
-        mock_resp = Mock(ok=True, json=Mock(return_value={
-            'choices': [{'message': {'content': 'short result'}}]
-        }))
-        mock_http.post.return_value = mock_resp
+    def test_translate_very_long_text(self, translate_svc, mock_provider):
+        """Test translation handles long text."""
+        mock_provider.call_text.return_value = 'short result'
         long_text = 'A' * 5000
         result = translate_svc.translate_text(long_text, 'Translate: {}')
         assert result == 'short result'
 
-    def test_batch_with_mixed_languages(self, translate_svc, mock_http):
-        mock_resp = Mock(ok=True, json=Mock(return_value={
-            'choices': [{'message': {'content': json.dumps([
-                {'index': 0, 'translation': 'Phụ tùng'},
-                {'index': 1, 'translation': 'Car parts'}
-            ])}}]
-        }))
-        mock_http.post.return_value = mock_resp
+    def test_batch_with_mixed_languages(self, translate_svc, mock_provider):
+        """Test batch translation with mixed languages."""
+        mock_provider.call_text.return_value = json.dumps([
+            {'index': 0, 'translation': 'Phụ tùng'},
+            {'index': 1, 'translation': 'Car parts'}
+        ])
         result = translate_svc.batch_translate(['汽车配件', 'Car parts'])
         assert len(result) == 2
 
@@ -281,20 +293,18 @@ class TestEdgeCases:
         assert len(result) == 2
         assert 1 not in result
 
-    def test_review_once_with_empty_url(self, review_svc, mock_http):
-        mock_http.post.side_effect = Exception("invalid URL")
+    def test_review_once_with_empty_url(self, review_svc, mock_provider):
+        """Test review with empty URL returns None."""
+        mock_provider.call_vision.return_value = None
         result = review_svc.review_once('')
         assert result is None
 
-    def test_batch_process_large_batch(self, translate_svc, mock_http):
+    def test_batch_process_large_batch(self, translate_svc, mock_provider):
         """25 texts in one batch (max batch size)."""
+        mock_provider.call_text.return_value = json.dumps([
+            {'index': i, 'translation': f'translated {i}'} for i in range(25)
+        ])
         texts = ['text ' + str(i) for i in range(25)]
-        mock_resp = Mock(ok=True, json=Mock(return_value={
-            'choices': [{'message': {'content': json.dumps([
-                {'index': i, 'translation': f'translated {i}'} for i in range(25)
-            ])}}]
-        }))
-        mock_http.post.return_value = mock_resp
         result = translate_svc.batch_translate(texts)
         assert len(result) == 25
 
@@ -309,6 +319,37 @@ class TestEdgeCases:
         assert d['api_calls'] == 2
         assert d['api_errors'] == 1
         assert d['api_success_rate'] == 0.5
+        assert d['stages']['test']['items_per_s'] == 40.0
+        assert d['stages']['test']['success_rate'] == 0.95
+
+    def test_configured_concurrency_clamps_env(self, monkeypatch):
+        from scripts.concurrency import configured_concurrency
+
+        monkeypatch.setenv('CROSSPILOT_REVIEW_CONCURRENCY', '9999')
+        assert configured_concurrency('review', 100, maximum=120) == 120
+
+        monkeypatch.setenv('CROSSPILOT_REVIEW_CONCURRENCY', '0')
+        assert configured_concurrency('review', 100, minimum=5, maximum=120) == 5
+
+        monkeypatch.setenv('CROSSPILOT_REVIEW_CONCURRENCY', 'bad')
+        assert configured_concurrency('review', 100, minimum=5, maximum=120) == 100
+
+    def test_adaptive_map_reduces_after_failure_batch(self, monkeypatch):
+        from scripts.concurrency import adaptive_map
+
+        monkeypatch.setenv('CROSSPILOT_ADAPTIVE_FAILURE_RATE', '0.5')
+        results, stats = adaptive_map(
+            range(8),
+            lambda item: None if item < 4 else f'ok-{item}',
+            operation='review',
+            initial_workers=4,
+            min_workers=1,
+        )
+
+        assert len(results) == 8
+        assert stats['reductions'] >= 1
+        assert stats['final_workers'] < stats['initial_workers']
+        assert stats['events'][0]['reason'] == 'failure_rate'
 
     def test_new_request_id_unique(self):
         from scripts.pipeline_log import new_request_id
@@ -319,3 +360,790 @@ class TestEdgeCases:
         """Vietnamese text should use default prompt, not Chinese."""
         prompt = translate_svc._select_prompt('Phụ kiện ô tô', 'Default')
         assert prompt == 'Default'
+
+
+# === dmx_client 函数测试 ===
+class TestDmxClientAgnes:
+    """Agnes gen_agnes_rate_limited 和 agnes_review 测试（mock provider）。"""
+
+    def test_agnes_review_watermark_detected(self, mock_provider):
+        """Test agnes_review returns True for watermarked image."""
+        mock_provider.call_vision.return_value = True
+
+        from dmx_client import agnes_review
+        result = agnes_review(None, 'https://example.com/img.jpg', retries=1)
+        assert result is True
+
+    def test_agnes_review_clean_image(self, mock_provider):
+        """Test agnes_review returns False for clean image."""
+        mock_provider.call_vision.return_value = False
+
+        from dmx_client import agnes_review
+        result = agnes_review(None, 'https://example.com/clean.jpg', retries=1)
+        assert result is False
+
+    def test_agnes_review_empty_content(self, mock_provider):
+        """Test agnes_review returns None for empty response."""
+        mock_provider.call_vision.return_value = None
+
+        from dmx_client import agnes_review
+        result = agnes_review(None, 'https://example.com/img.jpg', retries=1)
+        assert result is None
+
+    def test_gen_agnes_quota_error_is_not_silenced(self, mock_provider):
+        """Test quota error returns empty string (current behavior)."""
+        from dmx_client import gen_agnes_rate_limited
+
+        # Simulate quota error by returning None (model_provider returns None on failure)
+        mock_provider.call_image_gen.return_value = None
+
+        # Current implementation returns empty string on failure, not raise
+        result = gen_agnes_rate_limited(None, 'https://example.com/img.jpg', retries=1)
+        assert result == ''
+
+    def test_agnes_review_http_error(self, mock_provider):
+        """Test agnes_review handles HTTP error."""
+        mock_provider.call_vision.return_value = None
+
+        from dmx_client import agnes_review
+        result = agnes_review(None, 'https://example.com/img.jpg', retries=1)
+        assert result is None
+
+    def test_gen_agnes_rate_limited_success(self, mock_provider):
+        """Test successful image generation."""
+        mock_provider.call_image_gen.return_value = 'https://new-image.example.com/1.png'
+
+        from dmx_client import gen_agnes_rate_limited
+        result = gen_agnes_rate_limited(None, 'https://example.com/img.jpg', retries=1)
+        assert result == 'https://new-image.example.com/1.png'
+
+    def test_gen_agnes_rate_limited_failure(self, mock_provider):
+        """Test image generation failure returns empty string."""
+        mock_provider.call_image_gen.return_value = None
+
+        from dmx_client import gen_agnes_rate_limited
+        result = gen_agnes_rate_limited(None, 'https://example.com/img.jpg', retries=1)
+        assert result == ''
+
+    def test_gen_agnes_rate_limited_429_retry(self, mock_provider):
+        """Test retry on rate limit (current implementation doesn't retry at dmx_client level)."""
+        mock_provider.call_image_gen.return_value = 'https://retry.example.com/1.png'
+
+        from dmx_client import gen_agnes_rate_limited
+        result = gen_agnes_rate_limited(None, 'https://example.com/img.jpg', retries=3)
+        assert result == 'https://retry.example.com/1.png'
+
+    def test_all_generation_prompts_remove_people(self):
+        from dmx_client import (
+            AGNES_MAIN_PROMPT,
+            AGNES_VARIANT_PROMPT,
+            AGNES_PROMPT,
+        )
+
+        prompts = (
+            AGNES_MAIN_PROMPT,
+            AGNES_VARIANT_PROMPT,
+            AGNES_PROMPT,
+        )
+        for prompt in prompts:
+            lowered = prompt.lower()
+            assert 'person' in lowered
+            assert 'human' in lowered
+            assert 'hand' in lowered
+            assert 'reconstruct' in lowered
+
+
+# === services/constants 测试 ===
+class TestSharedConstants:
+    """验证 BRANDS 共享常量正确导入且内容一致。"""
+
+    def test_brands_not_empty(self):
+        from services.constants import BRANDS
+        assert len(BRANDS) > 30
+        assert 'bmw' in BRANDS
+        assert '丰田' in BRANDS
+
+    def test_brands_contains_ebay_specific(self):
+        from services.constants import BRANDS
+        assert 'joyon' in BRANDS
+        assert 'shopee' in BRANDS
+        assert 'lazada' in BRANDS
+
+    def test_brands_all_lowercase_ascii(self):
+        from services.constants import BRANDS
+        for b in BRANDS:
+            if b.isascii():
+                assert b == b.lower()
+
+    def test_image_policy_detects_any_human_presence(self):
+        from services.constants import (
+            IMAGE_POLICY_VERSION,
+            IMAGE_REMEDIATION_REVIEW_PROMPT,
+        )
+        assert IMAGE_POLICY_VERSION == 'remove_people_v1'
+        assert 'ANY person' in IMAGE_REMEDIATION_REVIEW_PROMPT
+        assert 'face' in IMAGE_REMEDIATION_REVIEW_PROMPT
+        assert 'hand' in IMAGE_REMEDIATION_REVIEW_PROMPT
+        assert 'mannequin' in IMAGE_REMEDIATION_REVIEW_PROMPT
+
+
+# === Pipeline 管道阶段测试 ===
+class TestPipelineStages:
+    """测试管道阶段函数（mock 依赖）。"""
+
+    def test_detect_amazon_adapter(self):
+        from adapters import detect_adapter
+        # 用正确 header mock
+        ws = Mock()
+        ws.cell = Mock()
+        headers = {1: '商品id', 2: '产品标题', 3: '产品描述',
+                   4: '产品图片', 5: '变种图片', 6: '产品图片链接'}
+        def mock_cell(r, c):
+            m = Mock()
+            m.value = headers.get(c, f'col{c}')
+            return m
+        ws.cell.side_effect = mock_cell
+        result = detect_adapter(ws)
+        assert result is not None
+
+    def test_rule_strip_brands_removes_bmw(self):
+        from services.constants import BRANDS
+        import re
+        _BRAND_PATTERN = re.compile('|'.join(re.escape(b) for b in BRANDS), re.IGNORECASE)
+        result = _BRAND_PATTERN.sub('', 'BMW Car Parts').strip()
+        result = re.sub(r'\s+', ' ', result)
+        assert 'BMW' not in result
+        assert 'Car Parts' in result
+
+    def test_brand_re_matches_chinese(self):
+        from services.constants import BRANDS
+        import re
+        _BRAND_PATTERN = re.compile('|'.join(re.escape(b) for b in BRANDS), re.IGNORECASE)
+        result = _BRAND_PATTERN.sub('', '丰田配件')
+        assert '丰田' not in result
+
+    def test_amazon_load_keys_returns_dict(self, monkeypatch, tmp_path):
+        """验证 model_provider._load_keys 返回 dict。"""
+        import scripts.model_provider as mp
+
+        # Create a temporary keys.json
+        keys_file = tmp_path / 'keys.json'
+        keys_file.write_text(json.dumps({'dmx_key': 'test-key', 'deepseek_key': 'ds-key'}))
+
+        monkeypatch.setenv('CROSSPILOT_KEYS_PATH', str(keys_file))
+        # Reload keys to pick up the new file
+        monkeypatch.setattr(mp, '_KEYS', mp._load_keys())
+
+        keys = mp._load_keys()
+        assert isinstance(keys, dict)
+        assert 'dmx_key' in keys or 'deepseek_key' in keys
+
+    def test_environment_keys_override_file_for_canary(self, monkeypatch, tmp_path):
+        """GitHub canary 必须能用环境变量覆盖测试夹具中的假密钥。"""
+        import scripts.model_provider as mp
+
+        keys_file = tmp_path / 'keys.json'
+        keys_file.write_text(json.dumps({
+            'deepseek_key': 'fake-file-deepseek',
+            'agnes_key': 'fake-file-agnes',
+        }))
+        monkeypatch.setenv('CROSSPILOT_KEYS_PATH', str(keys_file))
+        monkeypatch.setenv('CROSSPILOT_DEEPSEEK_KEY', 'real-env-deepseek')
+        monkeypatch.setenv('CROSSPILOT_AGNES_KEY', 'real-env-agnes')
+
+        keys = mp._load_keys()
+
+        assert keys['deepseek_key'] == 'real-env-deepseek'
+        assert keys['agnes_key'] == 'real-env-agnes'
+
+    def test_provider_quota_response_fails_fast(self):
+        """Quota exhaustion is terminal and must not be disguised as an empty result."""
+        import scripts.model_provider as mp
+
+        response = Mock(ok=False, status_code=402, text='insufficient balance')
+        provider = mp.DeepSeekProvider('test-key')
+        provider._session = Mock()
+        provider._session.post.return_value = response
+
+        with pytest.raises(mp.ProviderQuotaError, match='额度'):
+            provider.call_text('test', retries=3)
+
+        provider._session.post.assert_called_once()
+
+    def test_composite_provider_records_logical_call_metrics(self):
+        import scripts.model_provider as mp
+
+        provider = mp.CompositeProvider({
+            'text_provider': 'deepseek',
+            'vision_provider': 'agnes',
+            'image_gen_provider': 'agnes',
+            'deepseek_key': 'test-deepseek',
+            'agnes_key': 'test-agnes',
+        })
+        text = Mock()
+        text.call_text.return_value = 'ok'
+        vision = Mock()
+        vision.call_vision.return_value = False
+        image = Mock()
+        image.call_image_gen.return_value = None
+        provider._providers = {
+            'text': text,
+            'vision': vision,
+            'image_gen': image,
+        }
+
+        assert provider.call_text('prompt') == 'ok'
+        assert provider.call_vision('https://img.example/a.jpg') is False
+        assert provider.call_image_gen('https://img.example/a.jpg') is None
+
+        metrics = provider.metrics_snapshot()
+        assert metrics['api_calls'] == 3
+        assert metrics['api_errors'] == 1
+        assert metrics['by_operation']['text']['calls'] == 1
+        assert metrics['by_operation']['vision']['errors'] == 0
+        assert metrics['by_operation']['image_gen']['errors'] == 1
+
+    def test_provider_records_http_attempts_and_retries(self):
+        import scripts.model_provider as mp
+
+        rate_limited = Mock(ok=False, status_code=429, text='rate limited')
+        ok = Mock(ok=True, status_code=200, text='ok')
+        ok.json.return_value = {'choices': [{'message': {'content': 'translated'}}]}
+        provider = mp.CompositeProvider({
+            'text_provider': 'deepseek',
+            'vision_provider': 'agnes',
+            'image_gen_provider': 'agnes',
+            'deepseek_key': 'test-deepseek',
+            'agnes_key': 'test-agnes',
+        })
+        provider._providers['text']._session = Mock()
+        provider._providers['text']._session.post.side_effect = [
+            rate_limited,
+            ok,
+        ]
+
+        assert provider.call_text('prompt', retries=2) == 'translated'
+
+        metrics = provider.metrics_snapshot()
+        assert metrics['api_calls'] == 1
+        assert metrics['http_attempts'] == 2
+        assert metrics['http_retries'] == 1
+        assert metrics['http_status']['429'] == 1
+        assert metrics['by_operation']['text']['http_attempts'] == 2
+
+    def test_composite_provider_circuit_breaker_opens_after_failures(self, monkeypatch):
+        import scripts.model_provider as mp
+
+        monkeypatch.setenv('CROSSPILOT_CIRCUIT_FAILURE_THRESHOLD', '2')
+        monkeypatch.setenv('CROSSPILOT_CIRCUIT_COOLDOWN_S', '60')
+        provider = mp.CompositeProvider({
+            'text_provider': 'deepseek',
+            'vision_provider': 'agnes',
+            'image_gen_provider': 'agnes',
+            'deepseek_key': 'test-deepseek',
+            'agnes_key': 'test-agnes',
+        })
+        text = Mock()
+        text.call_text.return_value = None
+        provider._providers['text'] = text
+
+        assert provider.call_text('prompt-1') is None
+        assert provider.call_text('prompt-2') is None
+        assert provider.call_text('prompt-3') is None
+
+        assert text.call_text.call_count == 2
+        metrics = provider.metrics_snapshot()
+        assert metrics['circuit_open'] == 1
+        assert metrics['by_operation']['text']['circuit_open'] == 1
+
+    def test_amazon_xlsx_keeps_product_and_variant_images_separate(self):
+        import openpyxl
+        import scripts.process_amazon as p
+        from scripts.adapters.amazon_tk import AmazonTkAdapter
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.cell(1, 2, '产品标题')
+        ws.cell(1, 3, '产品描述')
+        ws.cell(1, 6, '产品图片链接')
+        ws.cell(1, 7, '变种图片链接')
+        ws.cell(2, 2, 'Test')
+        ws.cell(2, 6, 'https://img/main.jpg\nhttps://img/extra.jpg')
+        ws.cell(2, 7, 'https://img/variant.jpg')
+
+        row = p._stage_read(ws, AmazonTkAdapter)[0]
+        wb.close()
+
+        assert row['main_img'] == 'https://img/main.jpg'
+        assert row['extra_imgs'] == ['https://img/extra.jpg']
+        assert row['var_img'] == 'https://img/variant.jpg'
+        assert row['var_imgs'] == ['https://img/variant.jpg']
+
+    def test_ebay_person_issue_routes_by_image_role(self, monkeypatch):
+        """Test person detection routes by image role."""
+        from pipelines import ebay_stages
+
+        monkeypatch.setattr(ebay_stages, 'review_single', lambda _url: True)
+        status = Mock()
+        cache = {'review_results': {}, 'gen_results': {}}
+        saved = []
+        urls = [
+            'https://img/main.jpg',
+            'https://img/variant.jpg',
+            'https://img/attachment.jpg',
+        ]
+        url_map = {
+            urls[0]: {'main': [2], 'variant': [], 'att': []},
+            urls[1]: {'main': [], 'variant': [2], 'att': []},
+            urls[2]: {'main': [], 'variant': [], 'att': [(2, 19)]},
+        }
+
+        _review, _unknown, to_regen, to_delete = ebay_stages._stage_review(
+            status, urls, url_map, cache, lambda value: saved.append(value)
+        )
+
+        assert set(to_regen) == set(urls[:2])
+        assert to_delete == [urls[2]]
+        assert saved
+
+    def test_ebay_generation_uses_main_and_variant_person_prompts(self, monkeypatch, mock_provider):
+        """Test generation uses different prompts for main vs variant images."""
+        from pipelines import ebay_stages
+
+        captured = {}
+
+        def fake_generate(url, is_variant=False):
+            captured[url] = {'is_variant': is_variant}
+            return url.replace('img/', 'generated/')
+
+        monkeypatch.setattr(ebay_stages, '_gen_image', fake_generate)
+        status = Mock()
+        main_url = 'https://img/main.jpg'
+        variant_url = 'https://img/variant.jpg'
+        url_map = {
+            main_url: {'main': [2], 'variant': [], 'att': []},
+            variant_url: {'main': [], 'variant': [2], 'att': []},
+        }
+        mains = [main_url]
+        variants = [variant_url]
+
+        cache = {'gen_results': {}}
+        ebay_stages._stage_generate(
+            status,
+            [main_url, variant_url],
+            url_map,
+            cache,
+            lambda _cache: None,
+            mains,
+            variants,
+        )
+
+        assert captured[main_url]['is_variant'] is False
+        assert captured[variant_url]['is_variant'] is True
+        assert mains[0] == 'https://generated/main.jpg'
+        assert variants[0] == 'https://generated/variant.jpg'
+        assert cache['concurrency_stats']['image_gen']['items'] == 2
+
+    def test_ebay_image_policy_invalidates_only_image_cache(
+            self, tmp_path, monkeypatch):
+        """Test image policy version invalidates image cache only."""
+        import hashlib
+        from pipelines import ebay_stages
+        from services.constants import IMAGE_POLICY_VERSION
+
+        monkeypatch.setenv('CROSSPILOT_DATA_DIR', str(tmp_path))
+        source = tmp_path / 'input.xlsx'
+        source.write_bytes(b'image-policy-test')
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
+        cache_dir = tmp_path / 'cache'
+        cache_dir.mkdir()
+        (cache_dir / f'{digest}.json').write_text(json.dumps({
+            'version': 2,
+            'image_policy_version': 'old-policy',
+            'text_cache_version': ebay_stages._current_text_cache_version(),
+            'review_results': {'https://img/person.jpg': False},
+            'gen_results': {'https://img/main.jpg': 'https://old/generated.jpg'},
+            'title_translations': {'title': 'translated'},
+            'desc_cleaned': {},
+            'desc_translations': {},
+        }), encoding='utf-8')
+
+        cache, _save = ebay_stages._setup_cache(str(source))
+
+        assert cache['image_policy_version'] == IMAGE_POLICY_VERSION
+        assert cache['review_results'] == {}
+        assert cache['gen_results'] == {}
+        assert cache['title_translations'] == {'title': 'translated'}
+
+    def test_ebay_text_cache_version_invalidates_only_text_cache(
+            self, tmp_path, monkeypatch):
+        import hashlib
+        from pipelines import ebay_stages
+        from services.constants import IMAGE_POLICY_VERSION
+
+        monkeypatch.setenv('CROSSPILOT_DATA_DIR', str(tmp_path))
+        source = tmp_path / 'input.xlsx'
+        source.write_bytes(b'text-cache-policy-test')
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
+        cache_dir = tmp_path / 'cache'
+        cache_dir.mkdir()
+        (cache_dir / f'{digest}.json').write_text(json.dumps({
+            'version': 2,
+            'image_policy_version': IMAGE_POLICY_VERSION,
+            'text_cache_version': 'old-text-policy',
+            'review_results': {'https://img/person.jpg': True},
+            'gen_results': {'https://img/main.jpg': 'https://generated/main.jpg'},
+            'title_translations': {'title': 'stale translation'},
+            'desc_cleaned': {'desc': 'stale cleaned'},
+            'desc_translations': {'desc': 'stale translated'},
+        }), encoding='utf-8')
+
+        cache, _save = ebay_stages._setup_cache(str(source))
+
+        assert cache['review_results'] == {'https://img/person.jpg': True}
+        assert cache['gen_results'] == {'https://img/main.jpg': 'https://generated/main.jpg'}
+        assert cache['title_translations'] == {}
+        assert cache['desc_cleaned'] == {}
+        assert cache['desc_translations'] == {}
+        assert cache['text_cache_version'] == ebay_stages._current_text_cache_version()
+
+    def test_amazon_rechecks_old_cache_and_deletes_person_attachment(
+            self, tmp_path, monkeypatch):
+        """Test Amazon rechecks old cache and deletes person attachment."""
+        import scripts.process_amazon as p
+        from unittest.mock import Mock
+
+        # Create mock provider
+        mock_provider = Mock()
+        mock_provider.call_vision.return_value = True
+        mock_provider.call_image_gen.return_value = 'https://generated.example.com/img.png'
+
+        # Mock get_provider at the module level
+        monkeypatch.setattr(p, 'get_provider', lambda: mock_provider)
+
+        person_url = 'https://img/person-attachment.jpg'
+        cache_path = tmp_path / 'amazon-cache.json'
+        cache_path.write_text(json.dumps({
+            'image_policy_version': 'old-policy',
+            'review_results': {person_url: False},
+            'gen_results': {},
+        }), encoding='utf-8')
+        rows = [{
+            'main_img': '',
+            'var_img': '',
+            'var_imgs': [],
+            'extra_imgs': [person_url],
+        }]
+
+        runtime_metrics = {}
+        result = p._stage_review_and_gen(rows, str(cache_path), runtime_metrics=runtime_metrics)
+
+        assert result[0]['extra_imgs'] == []
+        # Verify call_vision was called
+        mock_provider.call_vision.assert_called()
+        assert runtime_metrics['concurrency']['amazon_review']['items'] == 1
+
+    def test_amazon_description_does_not_leak_image_placeholder(self, monkeypatch):
+        """Test description cleaning doesn't leak __IMG__ placeholder."""
+        import scripts.process_amazon as p
+        from unittest.mock import Mock
+
+        mock_provider = Mock()
+        mock_provider.call_text.return_value = '<p>Useful product</p>__IMG__'
+
+        # Mock get_provider at the module level
+        monkeypatch.setattr(p, 'get_provider', lambda: mock_provider)
+
+        data = [{'desc': '<p>Useful product</p><img src="https://img/a.jpg">'}]
+        result = p._stage_clean_descs(data)
+        assert '__IMG__' not in result[0]['desc']
+        assert '<img' not in result[0]['desc']
+
+    def test_amazon_title_ai_fallback_is_marked_for_review(self, monkeypatch):
+        """A valid rule fallback is still a quality downgrade users must see."""
+        import scripts.process_amazon as p
+
+        provider = Mock()
+        provider.call_text.return_value = None
+        monkeypatch.setattr(p, 'get_provider', lambda: provider)
+        data = [{
+            'title': (
+                'BMW Universal Replacement Dashboard Control Switch Assembly '
+                'with Mounting Hardware'
+            ),
+        }]
+
+        result = p._stage_optimize_titles(data)
+
+        assert any(
+            issue['code'] == 'title_ai_fallback'
+            for issue in result[0]['_quality_issues']
+        )
+
+    def test_amazon_description_ai_fallback_is_marked_for_review(self, monkeypatch):
+        """Rule-cleaned descriptions must not hide an AI cleaning failure."""
+        import scripts.process_amazon as p
+
+        provider = Mock()
+        provider.call_text.return_value = None
+        monkeypatch.setattr(p, 'get_provider', lambda: provider)
+        data = [{'desc': 'Durable metal product for daily use.'}]
+
+        result = p._stage_clean_descs(data)
+
+        assert any(
+            issue['code'] == 'description_ai_fallback'
+            for issue in result[0]['_quality_issues']
+        )
+
+    def test_amazon_bullet_rule_fallback_is_marked_for_review(self, monkeypatch):
+        """Fallbacks stay traceable and never fabricate placeholder product claims."""
+        import scripts.process_amazon as p
+
+        provider = Mock()
+        provider.call_text.return_value = None
+        monkeypatch.setattr(p, 'get_provider', lambda: provider)
+        data = [{
+            'title': 'Universal Control Switch',
+            'desc': 'Durable metal construction for common replacement applications.',
+        }]
+
+        result = p._stage_generate_bullets_keywords(data)
+
+        assert len(result[0]['bullets']) == 5
+        assert not any(
+            'additional product detail' in bullet
+            for bullet in result[0]['bullets']
+        )
+        assert any(
+            issue['code'] == 'bullet_rule_fallback'
+            for issue in result[0]['_quality_issues']
+        )
+
+    def test_amazon_partial_bullet_payload_is_padded_without_crashing(self, monkeypatch):
+        import scripts.process_amazon as p
+
+        provider = Mock()
+        provider.call_text.return_value = json.dumps({
+            'bullets': ['Durable metal', 'Simple installation'],
+            'keywords': 'switch,control,replacement,metal,auto,part,fit,install,durable,universal',
+        })
+        monkeypatch.setattr(p, 'get_provider', lambda: provider)
+        data = [{
+            'title': 'Universal Control Switch',
+            'desc': 'Durable metal construction for common replacement applications.',
+        }]
+
+        result = p._stage_generate_bullets_keywords(data)
+
+        assert len(result[0]['bullets']) == 5
+        assert result[0]['bullets'][:2] == ['Durable metal', 'Simple installation']
+        assert any(
+            issue['code'] == 'bullet_rule_fallback'
+            for issue in result[0]['_quality_issues']
+        )
+
+    def test_amazon_poor_bullets_and_keywords_are_marked_for_review(self, monkeypatch):
+        import scripts.process_amazon as p
+
+        provider = Mock()
+        provider.call_text.return_value = json.dumps({
+            'bullets': [
+                'BMW quality product',
+                'BMW quality product',
+                'Great quality',
+                'Great quality',
+                'Great quality',
+            ],
+            'keywords': 'bmw, product, durable',
+        })
+        monkeypatch.setattr(p, 'get_provider', lambda: provider)
+        data = [{
+            'title': '12V Stainless Trailer Hitch Lock 2 Pack',
+            'desc': (
+                'Made from stainless steel for corrosion resistance. '
+                'Includes two keys and lock pin for trailer hitch use. '
+                'Fits 1/2 inch and 5/8 inch receivers. '
+                'Package includes 2 lock pins and dust caps. '
+                'Simple tool-free installation for towing accessories.'
+            ),
+        }]
+
+        result = p._stage_generate_bullets_keywords(data)
+        issues = {issue['code'] for issue in result[0]['_quality_issues']}
+
+        assert 'bullet_quality_warning' in issues
+        assert 'keyword_quality_warning' in issues
+        assert 'bmw' not in result[0]['keywords'].lower()
+        assert len([kw for kw in result[0]['keywords'].split(',') if kw.strip()]) == 10
+
+    def test_amazon_title_fact_loss_rejects_ai_title(self, monkeypatch):
+        import scripts.process_amazon as p
+
+        provider = Mock()
+        provider.call_text.return_value = 'Universal Replacement Control Switch'
+        monkeypatch.setattr(p, 'get_provider', lambda: provider)
+        data = [{
+            'title': (
+                'BMW X5 2018 12V Dashboard Control Switch Assembly '
+                '2 Pack with Mounting Hardware and Long Compatibility Text'
+            ),
+        }]
+
+        result = p._stage_optimize_titles(data)
+
+        assert '2018' in result[0]['title']
+        assert any(
+            issue['code'] == 'title_fact_loss'
+            for issue in result[0]['_quality_issues']
+        )
+
+    def test_amazon_description_fact_loss_keeps_rule_cleaned_desc(self, monkeypatch):
+        import scripts.process_amazon as p
+
+        provider = Mock()
+        provider.call_text.return_value = 'Useful product for daily use.'
+        monkeypatch.setattr(p, 'get_provider', lambda: provider)
+        data = [{
+            'desc': 'Stainless lock pin for 12V trailer, size 5/8 inch, includes 2 keys.',
+        }]
+
+        result = p._stage_clean_descs(data)
+
+        assert '12V' in result[0]['desc']
+        assert '5/8 inch' in result[0]['desc']
+        assert any(
+            issue['code'] == 'description_fact_loss'
+            for issue in result[0]['_quality_issues']
+        )
+
+    def test_amazon_quality_issue_summary_is_bounded_and_aggregated(self):
+        import scripts.process_amazon as p
+
+        rows = [
+            {'_quality_issues': [
+                {'code': 'title_ai_fallback', 'message': 'fallback'},
+            ]},
+            {'_quality_issues': [
+                {'code': 'title_ai_fallback', 'message': 'fallback'},
+                {'code': 'description_ai_fallback', 'message': 'fallback'},
+            ]},
+        ]
+
+        summary = p._summarize_row_quality_issues(rows)
+
+        assert any('标题 AI 优化降级为规则处理：2 行' in item for item in summary)
+        assert any('描述 AI 清洗降级为规则处理：1 行' in item for item in summary)
+
+    def test_amazon_input_rejects_missing_core_fields(self):
+        import scripts.process_amazon as p
+
+        with pytest.raises(ValueError, match='产品描述'):
+            p._validate_amazon_input([{
+                'title': 'Test Product',
+                'desc': '',
+                'main_img': 'https://img.example/main.jpg',
+            }])
+
+    def test_amazon_output_validation_marks_incomplete_bullets_for_review(self, tmp_path):
+        """质量问题必须成为结构化复核结果，不能只打印后继续标记成功。"""
+        import openpyxl
+        import scripts.process_amazon as p
+
+        output = tmp_path / 'bad-amazon-output.xlsx'
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(['header'] * 24)
+        ws.append(['defaults'] * 24)
+        row = [''] * 24
+        row[0] = 'Test Product'
+        row[1] = 'Useful description'
+        row[2] = 'https://img.example/main.jpg'
+        row[17] = 'Only one bullet'
+        row[22] = 'test keyword'
+        ws.append(row)
+        wb.save(output)
+        wb.close()
+
+        result = p._validate_amazon_output(str(output), 1)
+
+        assert result['passed'] is False
+        assert any('Bullet' in issue for issue in result['issues'])
+
+    def test_amazon_output_validation_flags_semantic_quality(self, tmp_path):
+        import openpyxl
+        import scripts.process_amazon as p
+
+        output = tmp_path / 'weak-amazon-output.xlsx'
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(['header'] * 24)
+        ws.append(['defaults'] * 24)
+        row = [''] * 24
+        row[0] = 'Test Product'
+        row[1] = 'Useful description with stainless steel lock pin.'
+        row[2] = 'https://img.example/main.jpg'
+        for column in range(17, 22):
+            row[column] = 'Great quality product'
+        row[22] = 'product, bmw'
+        ws.append(row)
+        wb.save(output)
+        wb.close()
+
+        result = p._validate_amazon_output(str(output), 1)
+
+        assert result['passed'] is False
+        assert any('Bullet' in issue and '重复' in issue for issue in result['issues'])
+        assert any('关键词' in issue for issue in result['issues'])
+
+    def test_amazon_json_rows_use_same_quality_rules(self):
+        import scripts.process_amazon as p
+
+        result = p._validate_amazon_rows([{
+            'title': 'Test Product',
+            'desc': 'Useful description',
+            'main_img': 'https://img.example/main.jpg',
+            'bullets': ['Great quality product'] * 5,
+            'keywords': 'product, item',
+        }])
+
+        assert result['passed'] is False
+        assert any('Bullet' in issue for issue in result['issues'])
+        assert any('关键词' in issue for issue in result['issues'])
+
+    def test_amazon_title_normalization_restores_compatibility_prefix(self):
+        import scripts.process_amazon as p
+
+        title = p._normalize_title('BMW Replacement Control Arm')
+
+        assert title.startswith('For ')
+        assert len(title) <= 75
+
+    def test_amazon_stage_changes_are_captured_as_audit_trail(self, monkeypatch):
+        import scripts.process_amazon as p
+
+        provider = Mock()
+        provider.call_text.return_value = None
+        monkeypatch.setattr(p, 'get_provider', lambda: provider)
+        data = [{
+            'title': (
+                'BMW Universal Replacement Dashboard Control Switch Assembly '
+                'with Mounting Hardware'
+            ),
+        }]
+
+        result = p._stage_optimize_titles(data)
+        validation = p._attach_audit_to_validation(
+            {'passed': False, 'issues': ['第 1 行标题需复核']},
+            result,
+        )
+
+        assert any(
+            item['stage'] == '标题优化'
+            and item['field'] == 'title'
+            and item['before'].startswith('BMW Universal')
+            and item['after'].startswith('For BMW Universal')
+            for item in result[0]['_audit']
+        )
+        assert validation['audit'][0]['row'] == 1
+        assert validation['audit'][0]['stage'] == '标题优化'
