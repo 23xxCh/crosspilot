@@ -1,0 +1,40 @@
+{
+  "商品id": [
+    "fixture-item-1"
+  ],
+  "产品标题": [
+    "Optimized reusable windshield sun shade"
+  ],
+  "产品描述": [
+    "Synthetic fixture output row for Amazon refill JSON contract tests."
+  ],
+  "产品图片链接": [
+    [
+      "https://example.com/images/main-clean.jpg",
+      "https://example.com/images/detail-clean.jpg"
+    ]
+  ],
+  "变种图片链接": [
+    [
+      "https://example.com/images/variant-blue-clean.jpg"
+    ]
+  ],
+  "Bullet Point1": [
+    "Blocks sunlight and helps reduce heat inside parked vehicles."
+  ],
+  "Bullet Point2": [
+    "Foldable design stores compactly when not in use."
+  ],
+  "Bullet Point3": [
+    "Synthetic bullet copy used only for automated tests."
+  ],
+  "Bullet Point4": [
+    "Compatible with common front windshield dimensions."
+  ],
+  "Bullet Point5": [
+    "Includes one sun shade fixture item."
+  ],
+  "关键词信息": [
+    "windshield sun shade, car heat block, foldable sun visor"
+  ]
+}

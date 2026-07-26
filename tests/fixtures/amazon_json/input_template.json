@@ -1,0 +1,22 @@
+{
+  "商品id": [
+    "fixture-item-1"
+  ],
+  "产品标题": [
+    "Reusable windshield sun shade"
+  ],
+  "产品描述": [
+    "Synthetic fixture row for Amazon column-oriented JSON contract tests."
+  ],
+  "产品图片链接": [
+    [
+      "https://example.com/images/main.jpg",
+      "https://example.com/images/detail.jpg"
+    ]
+  ],
+  "变种图片链接": [
+    [
+      "https://example.com/images/variant-blue.jpg"
+    ]
+  ]
+}

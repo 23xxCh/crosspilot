@@ -15,13 +15,17 @@ from scripts.services.amazon_json import (
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INPUT_TEMPLATE = os.path.join(
     ROOT,
-    '亚马逊表',
-    '跨境电商自动化采集表(数据格式模板).json',
+    'tests',
+    'fixtures',
+    'amazon_json',
+    'input_template.json',
 )
 OUTPUT_TEMPLATE = os.path.join(
     ROOT,
-    '亚马逊表',
-    '跨境电商自动化回填表(数据格式模板) .json',
+    'tests',
+    'fixtures',
+    'amazon_json',
+    'output_template.json',
 )
 
 
