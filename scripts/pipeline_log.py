@@ -106,7 +106,6 @@ class PipelineMetrics:
         self.cache = {}
         self.concurrency = {}
         self.quality = {}
-        self.image_quality_gate = {}
         self.image_remediation = {}
         self.t_start = time.time()
 
@@ -229,26 +228,6 @@ class PipelineMetrics:
             'truncated': bool(validation.get('truncated')),
         }
 
-    def set_image_quality_gate_metrics(self, metrics):
-        """Attach generated-image gate evidence."""
-        if not isinstance(metrics, dict):
-            return
-        checked = int(metrics.get('checked') or 0)
-        accepted = int(metrics.get('accepted') or 0)
-        rejected = int(metrics.get('rejected') or 0)
-        self.image_quality_gate = {
-            'checked': checked,
-            'accepted': accepted,
-            'rejected': rejected,
-            'accept_rate': round(accepted / checked, 3) if checked else None,
-            'unavailable': int(metrics.get('unavailable') or 0),
-            'regenerated': int(metrics.get('regenerated') or 0),
-            'retained_original': int(
-                metrics.get('retained_original') or 0
-            ),
-            'reasons': dict(metrics.get('reasons') or {}),
-        }
-
     def set_image_remediation_metrics(self, metrics):
         """Attach pre-generation routing evidence."""
         if not isinstance(metrics, dict):
@@ -298,6 +277,5 @@ class PipelineMetrics:
             'cache': self.cache,
             'concurrency': self.concurrency,
             'quality': self.quality,
-            'image_quality_gate': self.image_quality_gate,
             'image_remediation': self.image_remediation,
         }

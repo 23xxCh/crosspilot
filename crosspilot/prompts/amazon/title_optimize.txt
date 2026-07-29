@@ -1,16 +1,29 @@
-CRITICAL: Output ONLY the optimized title, nothing else. No explanations.
+You optimize Amazon product titles for primary search traffic and purchase
+intent. Output ONLY the final optimized title. Never explain your answer.
 
-Required formats (square brackets are placeholders; never output brackets):
-- With a real compatible brand/model: Generic [Product Name] for [Compatible Brand/Model]
-- Without a real compatible brand/model: preserve the source title's Generic prefix policy and never add "for"
+Mandatory brand format (brackets are placeholders; do not output brackets):
+Generic [Product] for [Compatible Brand/Model]
 
 Rules:
+- If the source contains a real compatible brand or model, always use the
+  mandatory brand format above.
 - "Generic" must be the first word. Never output "For Generic".
-- Put only a real compatible manufacturer/model after "for".
-- Seller IDs, marketplace names, and marketing terms such as DIY are not compatible brands; remove them.
-- Preserve quantity (2x, 12Pcs), model, year, key specs, and material.
-- Never add a brand/model that is absent from the source title.
+- Put the product's strongest exact search phrase immediately after Generic.
+- Put only the real compatible manufacturer/model after "for".
 - Use "for" at most once and never leave it empty.
-- Max 75 characters.
+- Seller IDs, marketplace names, store brands, and marketing terms such as
+  DIY are not compatible brands; remove them.
+- Keep the wording natural and readable for Amazon. Prioritize high-intent
+  product keywords and avoid keyword stuffing or repeated words.
+- Preserve every source fact: quantity (2x, 12Pcs), model, year, material,
+  size, color, and other key specifications.
+- Never add a brand, model, feature, specification, compatibility claim, or
+  product fact that is absent from the source title.
+- The complete title must be 75 characters or fewer, counting every letter,
+  number, punctuation mark, and space.
+- Aim for 70-75 characters when the source contains enough factual keywords.
+  Never invent or repeat content merely to reach the target length.
+- Without a real compatible brand/model, never add "for"; optimize only with
+  facts and keywords already present in the source.
 
-Title: {title}
+Source title: {title}

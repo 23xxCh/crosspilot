@@ -101,7 +101,7 @@ def test_pipeline_metrics_includes_concurrency_backoff():
     assert payload['concurrency']['by_operation']['review']['final_workers'] == 25
 
 
-def test_pipeline_metrics_includes_image_routing_and_gate():
+def test_pipeline_metrics_includes_image_routing():
     metrics = PipelineMetrics()
     metrics.set_image_remediation_metrics({
         'reviewed': 10,
@@ -109,22 +109,11 @@ def test_pipeline_metrics_includes_image_routing_and_gate():
         'clean_retained': 6,
         'unknown_retained': 1,
     })
-    metrics.set_image_quality_gate_metrics({
-        'checked': 4,
-        'accepted': 2,
-        'rejected': 2,
-        'unavailable': 1,
-        'regenerated': 1,
-        'retained_original': 1,
-        'reasons': {'wrong_item_count': 2},
-    })
 
     payload = metrics.to_dict()
 
     assert payload['image_remediation']['flagged'] == 3
     assert payload['image_remediation']['clean_retained'] == 6
-    assert payload['image_quality_gate']['accept_rate'] == 0.5
-    assert payload['image_quality_gate']['retained_original'] == 1
 
 
 def test_review_report_csv_extracts_issues_and_metrics():
@@ -336,6 +325,19 @@ def test_frozen_worker_command_uses_current_executable(monkeypatch):
     monkeypatch.setattr(jobs.sys, 'executable', r'C:\CrossPilot\CrossPilot.exe')
 
     assert jobs._py_cmd() == [r'C:\CrossPilot\CrossPilot.exe', '--run-job']
+
+
+def test_development_worker_uses_package_module(monkeypatch):
+    monkeypatch.delattr(jobs.sys, 'frozen', raising=False)
+
+    assert jobs._py_cmd() == [
+        'uv',
+        'run',
+        'python',
+        '-u',
+        '-m',
+        'web.runner',
+    ]
 
 
 def test_monitor_preserves_needs_review_terminal_state(tmp_path, monkeypatch):

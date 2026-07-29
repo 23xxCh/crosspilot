@@ -1,6 +1,6 @@
 """Test fixtures: shared across all pipeline tests."""
 import atexit
-import os, sys, json, shutil, tempfile
+import os, json, shutil, tempfile
 import pytest
 
 # Tests must never touch the real task database, uploads, cache, or API keys.
@@ -18,8 +18,7 @@ with open(_TEST_KEYS_PATH, 'w', encoding='utf-8') as _keys_file:
     }, _keys_file)
 atexit.register(lambda: shutil.rmtree(_TEST_RUNTIME_DIR, ignore_errors=True))
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
-import process_ebay_tk
+from scripts import process_ebay_tk
 import openpyxl
 
 

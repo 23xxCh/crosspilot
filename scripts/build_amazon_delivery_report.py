@@ -7,7 +7,12 @@ import csv
 import json
 from pathlib import Path
 
-from services.amazon_json import (
+if __package__ in {None, ""}:
+    from _bootstrap import ensure_package_imports
+    ensure_package_imports()
+
+from crosspilot.image_risk import assessment_status
+from scripts.services.amazon_json import (
     AMAZON_JSON_OUTPUT_FIELDS,
     load_columnar_json,
     validate_columnar_payload,
@@ -41,7 +46,7 @@ def build_delivery_report(
         )
 
     cache = _load_json(cache_path)
-    review_results = cache.get('review_results') or {}
+    risk_assessments = cache.get('risk_assessments') or {}
     gen_meta = cache.get('gen_meta') or {}
     gen_failures = cache.get('gen_failures') or {}
     metrics = (
@@ -99,7 +104,7 @@ def build_delivery_report(
         ]
         retained_risky_main = bool(
             source_main
-            and review_results.get(source_main) is True
+            and assessment_status(risk_assessments.get(source_main)) == 'risk'
             and output_main == source_main
         )
         retained_risky_variants = [
@@ -115,7 +120,9 @@ def build_delivery_report(
                 zip(source_variants, output_variants)
             )
             if (
-                review_results.get(source_url) is True
+                assessment_status(
+                    risk_assessments.get(source_url)
+                ) == 'risk'
                 and output_url == source_url
             )
         ]

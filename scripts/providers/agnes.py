@@ -12,6 +12,7 @@ import requests
 from requests.adapters import HTTPAdapter
 
 from crosspilot.model_registry import get_model_registry
+from crosspilot.image_risk import parse_image_assessment_response
 from crosspilot.prompt_registry import get_prompt_registry
 
 from .base import ModelProvider
@@ -46,9 +47,10 @@ class AgnesProvider(ModelProvider):
 
     _PROMPTS = get_prompt_registry()
     REVIEW_PROMPT = _PROMPTS.get("images.review")
+    RISK_ASSESSMENT_PROMPT = _PROMPTS.get("images.risk_assessment")
+    RISK_CONFIRMATION_PROMPT = _PROMPTS.get("images.risk_confirmation")
     MAIN_IMAGE_PROMPT = _PROMPTS.get("images.main_product")
     VARIANT_IMAGE_PROMPT = _PROMPTS.get("images.variant")
-    IMAGE_QUALITY_PROMPT = _PROMPTS.get("images.quality_gate")
 
     def __init__(
         self,
@@ -74,9 +76,14 @@ class AgnesProvider(ModelProvider):
         ).strip()
         prompts = get_prompt_registry()
         self.REVIEW_PROMPT = prompts.get("images.review")
+        self.RISK_ASSESSMENT_PROMPT = prompts.get(
+            "images.risk_assessment"
+        )
+        self.RISK_CONFIRMATION_PROMPT = prompts.get(
+            "images.risk_confirmation"
+        )
         self.MAIN_IMAGE_PROMPT = prompts.get("images.main_product")
         self.VARIANT_IMAGE_PROMPT = prompts.get("images.variant")
-        self.IMAGE_QUALITY_PROMPT = prompts.get("images.quality_gate")
         self._congestion_policy = (
             congestion_policy or CongestionPolicy()
         )
@@ -91,7 +98,7 @@ class AgnesProvider(ModelProvider):
                 ),
                 clock=effective_clock,
             )
-            for operation in ("vision", "image_quality", "image_gen")
+            for operation in ("vision", "image_gen")
         }
         self._session = requests.Session()
         adapter = HTTPAdapter(
@@ -300,17 +307,23 @@ class AgnesProvider(ModelProvider):
             raise last_error
         return None
 
-    def call_vision(
+    def _call_vision_parsed(
         self,
         image_url: str,
-        retries: int = 3,
-    ) -> Optional[bool]:
+        *,
+        prompt: str,
+        parser,
+        invalid_message: str,
+        max_tokens: int,
+        retries: int,
+    ):
         retries = max(1, int(retries or 1))
         last_error: ProviderError | None = None
         congestion_retries = 0
         for attempt in range(retries):
             self._ensure_not_congested("vision")
             self._acquire_text()
+            response = None
             try:
                 response = self._session.post(
                     f"{self.BASE_URL}/v1/chat/completions",
@@ -325,12 +338,12 @@ class AgnesProvider(ModelProvider):
                                 },
                                 {
                                     "type": "text",
-                                    "text": self.REVIEW_PROMPT,
+                                    "text": prompt,
                                 },
                             ],
                         }],
                         "temperature": 0,
-                        "max_tokens": 10,
+                        "max_tokens": max_tokens,
                     },
                     timeout=60,
                 )
@@ -360,12 +373,8 @@ class AgnesProvider(ModelProvider):
                         )
                     except (AttributeError, IndexError, TypeError, ValueError):
                         content = ""
-                    answer = re.match(
-                        r"^\s*(YES|NO)\b",
-                        content or "",
-                        re.IGNORECASE,
-                    )
-                    if answer:
+                    parsed = parser(content)
+                    if parsed is not None:
                         self._record_attempt(
                             "vision",
                             "agnes",
@@ -373,9 +382,9 @@ class AgnesProvider(ModelProvider):
                             True,
                             retry=attempt > 0,
                         )
-                        return answer.group(1).upper() == "YES"
+                        return parsed
                     last_error = ProviderResponseError(
-                        "Agnes 图审响应不是 YES/NO",
+                        invalid_message,
                         provider="agnes",
                         operation="vision",
                         status_code=response.status_code,
@@ -422,6 +431,51 @@ class AgnesProvider(ModelProvider):
         if last_error is not None:
             raise last_error
         return None
+    def call_vision(
+        self,
+        image_url: str,
+        retries: int = 3,
+    ) -> Optional[bool]:
+        def parse_bool(content):
+            answer = re.match(
+                r"^\s*(YES|NO)\b",
+                content or "",
+                re.IGNORECASE,
+            )
+            return (
+                answer.group(1).upper() == "YES"
+                if answer else None
+            )
+
+        return self._call_vision_parsed(
+            image_url,
+            prompt=self.REVIEW_PROMPT,
+            parser=parse_bool,
+            invalid_message="Agnes 图审响应不是 YES/NO",
+            max_tokens=10,
+            retries=retries,
+        )
+
+    def assess_image(
+        self,
+        image_url: str,
+        *,
+        confirmation: bool = False,
+        retries: int = 3,
+    ) -> Optional[dict]:
+        prompt = (
+            self.RISK_CONFIRMATION_PROMPT
+            if confirmation
+            else self.RISK_ASSESSMENT_PROMPT
+        )
+        return self._call_vision_parsed(
+            image_url,
+            prompt=prompt,
+            parser=parse_image_assessment_response,
+            invalid_message="Agnes 图审响应不是结构化风险 JSON",
+            max_tokens=400,
+            retries=retries,
+        )
 
     def call_image_gen(
         self,
@@ -548,187 +602,6 @@ class AgnesProvider(ModelProvider):
                     break
                 else:
                     self._sleep(5)
-        if last_error is not None:
-            raise last_error
-        return None
-
-    @staticmethod
-    def _parse_quality_result(content: str) -> dict | None:
-        match = re.search(r"\{.*\}", content or "", re.DOTALL)
-        if not match:
-            return None
-        try:
-            payload = json.loads(match.group(0))
-        except (TypeError, ValueError):
-            return None
-        if not isinstance(payload, dict):
-            return None
-        accepted = payload.get("accepted")
-        if not isinstance(accepted, bool):
-            return None
-        try:
-            score = max(0, min(100, int(payload.get("score", 0))))
-        except (TypeError, ValueError):
-            score = 0
-        raw_reasons = payload.get("reasons") or []
-        if not isinstance(raw_reasons, list):
-            raw_reasons = [raw_reasons]
-        reasons = [
-            str(reason).strip()[:80]
-            for reason in raw_reasons
-            if str(reason).strip()
-        ][:10]
-        return {
-            "accepted": accepted and score >= 90,
-            "score": score,
-            "reasons": reasons,
-        }
-
-    def call_image_quality(
-        self,
-        source_url: str,
-        generated_url: str,
-        *,
-        context: str = "",
-        is_variant: bool = False,
-        retries: int = 2,
-    ) -> Optional[dict]:
-        """Strictly compare a generated candidate with its source image."""
-        retries = max(1, int(retries or 1))
-        last_error: ProviderError | None = None
-        congestion_retries = 0
-        context_text = str(context or "").strip()[:500]
-        prompt = self.IMAGE_QUALITY_PROMPT
-        if context_text:
-            prompt += (
-                "\n\nListing context (supporting evidence only): "
-                + context_text
-            )
-        prompt += (
-            "\nThe second image is a variant."
-            if is_variant
-            else "\nThe second image is the main product image."
-        )
-        for attempt in range(retries):
-            self._ensure_not_congested("image_quality")
-            self._acquire_text()
-            response = None
-            try:
-                response = self._session.post(
-                    f"{self.BASE_URL}/v1/chat/completions",
-                    json={
-                        "model": self.VISION_MODEL,
-                        "messages": [{
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "SOURCE REFERENCE:",
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": source_url},
-                                },
-                                {
-                                    "type": "text",
-                                    "text": "GENERATED CANDIDATE:",
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": generated_url},
-                                },
-                                {
-                                    "type": "text",
-                                    "text": prompt,
-                                },
-                            ],
-                        }],
-                        "temperature": 0,
-                        "max_tokens": 220,
-                    },
-                    timeout=90,
-                )
-            except (requests.Timeout, requests.RequestException) as exc:
-                last_error = self._request_error(
-                    exc,
-                    operation="image_quality",
-                )
-                self._record_attempt(
-                    "image_quality",
-                    "agnes",
-                    None,
-                    False,
-                    retry=attempt > 0,
-                    error=last_error,
-                )
-                self._record_congestion_request_failure(
-                    "image_quality",
-                )
-            else:
-                if response.ok:
-                    self._record_congestion_success("image_quality")
-                    try:
-                        content = (
-                            response.json()
-                            .get("choices", [{}])[0]
-                            .get("message", {})
-                            .get("content", "")
-                        )
-                    except (AttributeError, IndexError, TypeError, ValueError):
-                        content = ""
-                    result = self._parse_quality_result(content)
-                    if result is not None:
-                        self._record_attempt(
-                            "image_quality",
-                            "agnes",
-                            response.status_code,
-                            True,
-                            retry=attempt > 0,
-                        )
-                        return result
-                    last_error = ProviderResponseError(
-                        "Agnes 图片质量门禁响应不是有效 JSON",
-                        provider="agnes",
-                        operation="image_quality",
-                        status_code=response.status_code,
-                    )
-                    self._record_attempt(
-                        "image_quality",
-                        "agnes",
-                        response.status_code,
-                        False,
-                        retry=attempt > 0,
-                        error=last_error,
-                    )
-                else:
-                    last_error = self._record_response_error(
-                        "image_quality",
-                        response,
-                        retry=attempt > 0,
-                    )
-                    if isinstance(
-                        last_error,
-                        (ProviderAuthError, ProviderQuotaError),
-                    ):
-                        raise last_error
-            if attempt < retries - 1:
-                status_code = getattr(last_error, "status_code", None)
-                if status_code is None:
-                    break
-                if status_code == 503:
-                    if not self._can_retry_503(
-                        "image_quality",
-                        retries_used=congestion_retries,
-                        attempt=attempt,
-                        total_attempts=retries,
-                    ):
-                        break
-                    self._wait_for_503_retry(response)
-                    congestion_retries += 1
-                elif status_code == 429:
-                    break
-                else:
-                    self._sleep(2 * (attempt + 1))
         if last_error is not None:
             raise last_error
         return None

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import json
 import time
 import threading
@@ -11,12 +10,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-# Ensure scripts/ is importable
-_SCRIPTS = str(Path(__file__).resolve().parent.parent / 'scripts')
-if _SCRIPTS not in sys.path:
-    sys.path.insert(0, _SCRIPTS)
-
-from crosspilot.config import load_config, get, get_bool, get_int
+from crosspilot.config import load_config, get_bool, get_int
 from crosspilot.health import run_health_check, print_health_report
 
 
@@ -124,26 +118,6 @@ class PipelineRunner:
         os.environ['CROSSPILOT_REVIEW_CONCURRENCY'] = str(get_int('REVIEW_CONCURRENCY', 30))
         os.environ['CROSSPILOT_TEXT_CONCURRENCY'] = str(get_int('TEXT_CONCURRENCY', 100))
 
-        # Quality gate
-        if get_bool('QUALITY_GATE', False):
-            os.environ['CROSSPILOT_IMAGE_QUALITY_GATE'] = '1'
-            os.environ.pop('CROSSPILOT_SKIP_QUALITY_GATE', None)
-        else:
-            os.environ['CROSSPILOT_IMAGE_QUALITY_GATE'] = '0'
-            os.environ['CROSSPILOT_SKIP_QUALITY_GATE'] = '1'
-        os.environ['CROSSPILOT_IMAGE_REMEDIATE_ONLY'] = (
-            '1' if get_bool('IMAGE_REMEDIATE_ONLY', False) else '0'
-        )
-        os.environ['CROSSPILOT_IMAGE_QUALITY_REGEN_LIMIT'] = str(
-            max(0, get_int('IMAGE_QUALITY_REGEN_LIMIT', 1))
-        )
-        os.environ['CROSSPILOT_VALIDATE_GENERATED_IMAGE'] = (
-            '1' if get_bool('VALIDATE_GENERATED_IMAGE', False) else '0'
-        )
-        os.environ['CROSSPILOT_IMAGE_VALIDATION_ROUTE_LIMIT'] = str(
-            max(1, min(3, get_int('IMAGE_VALIDATION_ROUTE_LIMIT', 3)))
-        )
-
         # Skip image gen
         skip_images = image_only is False and (text_only or get_bool('SKIP_IMAGE_GEN', False))
         skip_text = text_only is False and image_only
@@ -173,17 +147,17 @@ class PipelineRunner:
 
     def _run_amazon(self, input_path: str, skip_images: bool, skip_text: bool) -> str:
         """Amazon 管道：生图+文本并行。"""
-        import process_amazon
+        from scripts import process_amazon
 
         if skip_images:
             # Text only: skip review+gen stage
             print('\n  [Text Only Mode] Skipping image review & generation.')
-            return process_amazon._main_impl(input_path)
+            return process_amazon.run_amazon_pipeline(input_path)
 
         if skip_text:
             # Image only: run full pipeline but text stages will be minimal
             print('\n  [Image Only Mode] Running image review & generation.')
-            return process_amazon._main_impl(input_path)
+            return process_amazon.run_amazon_pipeline(input_path)
 
         # Full parallel mode:
         # Load data once, run image stage + text stages in parallel threads
@@ -191,14 +165,14 @@ class PipelineRunner:
 
         # For now, run the full pipeline (which handles images first then text).
         # The existing pipeline already caches image results.
-        # True parallelism requires refactoring process_amazon to split stages.
+        # True parallelism requires extending the Amazon run scheduler.
         # Current approach: run full pipeline, image cache makes it fast.
         print('  Note: Full parallelism requires pipeline refactor. Using cached flow.')
-        return process_amazon._main_impl(input_path)
+        return process_amazon.run_amazon_pipeline(input_path)
 
     def _run_ebay(self, input_path: str, skip_images: bool, skip_text: bool) -> str:
         """eBay 管道。"""
-        from process_ebay_tk import _main
+        from scripts.process_ebay_tk import _main
         print('\n  Running eBay pipeline...')
         return _main(input_path)
 

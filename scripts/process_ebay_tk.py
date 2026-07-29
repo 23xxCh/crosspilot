@@ -11,10 +11,12 @@
 """
 import sys, os, json, time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if __package__ in {None, ""}:
+    from _bootstrap import ensure_package_imports
+    ensure_package_imports()
 
 # 导入共享模块（顶层符号保持兼容）
-from pipelines.ebay_shared import (
+from scripts.pipelines.ebay_shared import (
     # keys
     reload_credentials,
     # constants
@@ -41,7 +43,7 @@ from pipelines.ebay_shared import (
 )
 
 # 导入管道编排
-from pipelines.ebay_stages import _main as _pipeline_main
+from scripts.pipelines.ebay_stages import _main as _pipeline_main
 
 # === CLI 入口 ===
 _RUN_DIRECTLY = __name__ == '__main__' or sys.argv[0].endswith(('process_ebay_tk.py', 'runner.py'))

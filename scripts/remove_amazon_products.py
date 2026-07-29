@@ -10,13 +10,17 @@ from pathlib import Path
 import shutil
 import time
 
-from export_amazon_cn_review import (
+if __package__ in {None, ""}:
+    from _bootstrap import ensure_package_imports
+    ensure_package_imports()
+
+from scripts.review_package import (
     _atomic_json,
     _source_row,
     _translation_signature,
     render_html,
 )
-from services.amazon_json import (
+from scripts.services.amazon_json import (
     AMAZON_JSON_OUTPUT_FIELDS,
     validate_columnar_payload,
 )

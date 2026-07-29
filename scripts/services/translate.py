@@ -6,8 +6,8 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from crosspilot.prompt_registry import get_prompt_registry
-from pipeline_log import log as _log
-from model_provider import ProviderQuotaError, get_provider
+from ..pipeline_log import log as _log
+from ..model_provider import ProviderQuotaError, get_provider
 
 _CHINESE_RE = re.compile(r'[一-鿿]')
 _BATCH_SIZE = 25

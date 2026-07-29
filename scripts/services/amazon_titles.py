@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from services.constants import (
+from .constants import (
     COMPATIBILITY_BRAND_ALIASES,
     COMPATIBILITY_BRANDS,
     STRIP_ONLY_BRANDS,

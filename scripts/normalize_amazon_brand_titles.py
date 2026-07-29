@@ -8,18 +8,17 @@ import json
 import os
 from pathlib import Path
 import shutil
-import sys
 import time
 
-_ROOT = Path(__file__).resolve().parents[1]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+if __package__ in {None, ""}:
+    from _bootstrap import ensure_package_imports
+    ensure_package_imports()
 
-from services.amazon_json import (
+from scripts.services.amazon_json import (
     AMAZON_JSON_OUTPUT_FIELDS,
     validate_columnar_payload,
 )
-from services.amazon_titles import normalize_amazon_title_details
+from scripts.services.amazon_titles import normalize_amazon_title_details
 
 
 _REVIEW_FILES = (

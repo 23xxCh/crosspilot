@@ -1,3 +1,4 @@
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -261,6 +262,37 @@ def test_agnes_vision_timeout_does_not_repeat_long_request():
 
     assert provider._session.post.call_count == 1
     assert sleeps == []
+
+
+def test_agnes_assess_image_returns_structured_result():
+    from scripts.providers.agnes import AgnesProvider
+
+    response = Mock(ok=True, status_code=200, text="ok", headers={})
+    response.json.return_value = {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "status": "risk",
+                    "reasons": ["brand_logo"],
+                    "placement": "product_surface",
+                    "detected_text": ["TOYOTA"],
+                    "confidence": 0.97,
+                    "evidence": "A Toyota emblem appears on the product.",
+                })
+            }
+        }]
+    }
+    provider = AgnesProvider("test-key")
+    provider._acquire_text = lambda: None
+    provider._session = Mock()
+    provider._session.post.return_value = response
+
+    result = provider.assess_image("https://img.example/source.jpg")
+
+    assert result["status"] == "risk"
+    assert result["reasons"] == ["brand_logo"]
+    assert result["placement"] == "product_surface"
+    assert result["detected_text"] == ["TOYOTA"]
 
 
 def test_composite_falls_back_immediately_after_primary_429():

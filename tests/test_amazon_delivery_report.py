@@ -50,13 +50,23 @@ def test_delivery_report_tracks_generated_deleted_and_failed_images(
         ],
         '有问题的产品id': ['item-1'],
     }
+    def image_risk(status):
+        return {
+            'status': status,
+            'reasons': ['seller_watermark'] if status == 'risk' else [],
+            'placement': 'overlay' if status == 'risk' else 'none',
+            'detected_text': [],
+            'confidence': 0.95,
+            'evidence': 'test assessment',
+        }
+
     cache = {
-        'review_results': {
-            'https://img/main.jpg': True,
-            'https://img/clean-extra.jpg': False,
-            'https://img/risky-extra.jpg': True,
-            'https://img/clean-var.jpg': False,
-            'https://img/risky-var.jpg': True,
+        'risk_assessments': {
+            'https://img/main.jpg': image_risk('risk'),
+            'https://img/clean-extra.jpg': image_risk('safe'),
+            'https://img/risky-extra.jpg': image_risk('risk'),
+            'https://img/clean-var.jpg': image_risk('safe'),
+            'https://img/risky-var.jpg': image_risk('risk'),
         },
         'gen_meta': {
             'main:https://img/main.jpg': {
@@ -119,7 +129,7 @@ def test_delivery_report_preserves_empty_variant_arrays(tmp_path):
     cache_path = tmp_path / 'cache.json'
     _write(source_path, source)
     _write(output_path, output)
-    _write(cache_path, {'review_results': {}})
+    _write(cache_path, {'risk_assessments': {}})
 
     result = build_delivery_report(
         source_path,

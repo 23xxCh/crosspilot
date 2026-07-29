@@ -3,6 +3,9 @@
 这个文件展示了如何在新代码中使用 model_provider，
 以及如何将旧代码迁移到新的架构。
 """
+if __package__ in {None, ""}:
+    from _bootstrap import ensure_package_imports
+    ensure_package_imports()
 
 # =============================================================================
 # 新代码使用方式（推荐）
@@ -10,7 +13,7 @@
 
 def example_new_code():
     """新代码应该这样写 —— 完全与具体模型解耦。"""
-    from model_provider import get_provider
+    from scripts.model_provider import get_provider
 
     provider = get_provider()
 
@@ -95,34 +98,38 @@ def example_switch_model():
 旧代码迁移对照表：
 
 旧代码 (dmx_client.py):
-    from dmx_client import deepseek_call
+    from scripts.dmx_client import deepseek_call
     result = deepseek_call(session, payload)
 
 新代码:
-    from model_provider import get_provider
+    from scripts.model_provider import get_provider
     provider = get_provider()
     result = provider.call_text(prompt)
 
 旧代码 (ebay_shared.py):
-    from pipelines.ebay_shared import dmx_call, review_single, _gen_image
+    from scripts.pipelines.ebay_shared import (
+        dmx_call,
+        review_single,
+        _gen_image,
+    )
     text = dmx_call(payload)
     needs_fix = review_single(url)
     new_url = _gen_image(session, url)
 
 新代码:
-    from model_provider import get_provider
+    from scripts.model_provider import get_provider
     provider = get_provider()
     text = provider.call_text(prompt)
     needs_fix = provider.call_vision(url)
     new_url = provider.call_image_gen(url)
 
 旧代码 (process_amazon.py):
-    from dmx_client import deepseek_call, gen_agnes_rate_limited
+    from scripts.dmx_client import deepseek_call, gen_agnes_rate_limited
     text = deepseek_call(session, payload)
     new_url = gen_agnes_rate_limited(session, url)
 
 新代码:
-    from model_provider import get_provider
+    from scripts.model_provider import get_provider
     provider = get_provider()
     text = provider.call_text(prompt)
     new_url = provider.call_image_gen(url)

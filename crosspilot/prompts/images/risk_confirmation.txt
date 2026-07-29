@@ -1,0 +1,18 @@
+Independently re-check this e-commerce image for a destructive catalog safety
+decision. Do not rely on any previous review.
+
+Return exactly one JSON object:
+{
+  "status": "safe" | "risk" | "unknown",
+  "reasons": ["brand_logo" | "seller_watermark" | "person" | "non_product_text"],
+  "placement": "none" | "overlay" | "product_surface" | "packaging" | "background" | "unknown",
+  "detected_text": ["visible words, if any"],
+  "confidence": 0.0,
+  "evidence": "short factual visual evidence"
+}
+
+Pay special attention to vehicle badges, manufacturer logos, trademarked
+lettering, branded emblems, packaging labels, small corner watermarks, and
+marks physically printed on the sold product. A brand/logo intrinsic to the
+product must be brand_logo with product_surface or packaging. If visual
+evidence is insufficient, return unknown. Output JSON only.

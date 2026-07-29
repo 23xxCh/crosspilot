@@ -1,12 +1,9 @@
 """Unit tests for services/ — no network required (all mocked)."""
 import json, pytest
 from unittest.mock import Mock, patch, MagicMock
-import sys, os
-_PROJ = os.path.join(os.path.dirname(__file__), '..')
-sys.path.insert(0, _PROJ)  # for `import scripts.xxx`
-sys.path.insert(0, os.path.join(_PROJ, 'scripts'))  # for `from adapters import xxx`
-from services import TranslationService, ImageReviewService
-from services.translate import TRANSLATE_BATCH_PROMPT
+import os
+from scripts.services import TranslationService, ImageReviewService
+from scripts.services.translate import TRANSLATE_BATCH_PROMPT
 
 
 @pytest.fixture
@@ -17,10 +14,22 @@ def mock_provider(monkeypatch):
     provider.call_vision.return_value = False
     provider.call_image_gen.return_value = 'https://generated.example.com/img.png'
     # Patch at all locations where get_provider is imported
-    monkeypatch.setattr('model_provider.get_provider', lambda: provider)
-    monkeypatch.setattr('services.translate.get_provider', lambda: provider)
-    monkeypatch.setattr('services.review.get_provider', lambda: provider)
-    monkeypatch.setattr('dmx_client.get_provider', lambda: provider)
+    monkeypatch.setattr(
+        'scripts.model_provider.get_provider',
+        lambda: provider,
+    )
+    monkeypatch.setattr(
+        'scripts.services.translate.get_provider',
+        lambda: provider,
+    )
+    monkeypatch.setattr(
+        'scripts.services.review.get_provider',
+        lambda: provider,
+    )
+    monkeypatch.setattr(
+        'scripts.dmx_client.get_provider',
+        lambda: provider,
+    )
     return provider
 
 
@@ -50,9 +59,12 @@ class TestTranslationService:
         from unittest.mock import Mock
         mock_provider = Mock()
         mock_provider.call_text.return_value = 'Xin chào'
-        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
+        monkeypatch.setattr(
+            'scripts.services.translate.get_provider',
+            lambda: mock_provider,
+        )
 
-        from services.translate import TranslationService
+        from scripts.services.translate import TranslationService
         svc = TranslationService()
         result = svc.dmx_call({
             'model': 'deepseek-chat',
@@ -65,9 +77,12 @@ class TestTranslationService:
         from unittest.mock import Mock
         mock_provider = Mock()
         mock_provider.call_text.return_value = None
-        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
+        monkeypatch.setattr(
+            'scripts.services.translate.get_provider',
+            lambda: mock_provider,
+        )
 
-        from services.translate import TranslationService
+        from scripts.services.translate import TranslationService
         svc = TranslationService()
         result = svc.dmx_call({
             'model': 'deepseek-chat',
@@ -77,7 +92,7 @@ class TestTranslationService:
 
     def test_strip_code_fence(self):
         """测试代码块清理。"""
-        from services.translate import TranslationService
+        from scripts.services.translate import TranslationService
         assert TranslationService._strip_code_fence('```json\nhello\n```') == 'hello'
         assert TranslationService._strip_code_fence('```\nworld\n```') == 'world'
         assert TranslationService._strip_code_fence('plain text') == 'plain text'
@@ -109,7 +124,7 @@ class TestTranslationService:
 
     def test_translate_text_does_not_swallow_quota_exhaustion(self, translate_svc):
         """A terminal account failure must stop the pipeline, not trigger mass fallback."""
-        from model_provider import ProviderQuotaError
+        from scripts.model_provider import ProviderQuotaError
 
         translate_svc._provider.call_text.side_effect = ProviderQuotaError('额度不足')
 
@@ -370,7 +385,7 @@ class TestDmxClientAgnes:
         """Test agnes_review returns True for watermarked image."""
         mock_provider.call_vision.return_value = True
 
-        from dmx_client import agnes_review
+        from scripts.dmx_client import agnes_review
         result = agnes_review(None, 'https://example.com/img.jpg', retries=1)
         assert result is True
 
@@ -378,7 +393,7 @@ class TestDmxClientAgnes:
         """Test agnes_review returns False for clean image."""
         mock_provider.call_vision.return_value = False
 
-        from dmx_client import agnes_review
+        from scripts.dmx_client import agnes_review
         result = agnes_review(None, 'https://example.com/clean.jpg', retries=1)
         assert result is False
 
@@ -386,13 +401,13 @@ class TestDmxClientAgnes:
         """Test agnes_review returns None for empty response."""
         mock_provider.call_vision.return_value = None
 
-        from dmx_client import agnes_review
+        from scripts.dmx_client import agnes_review
         result = agnes_review(None, 'https://example.com/img.jpg', retries=1)
         assert result is None
 
     def test_gen_agnes_quota_error_is_not_silenced(self, mock_provider):
         """Test quota error returns empty string (current behavior)."""
-        from dmx_client import gen_agnes_rate_limited
+        from scripts.dmx_client import gen_agnes_rate_limited
 
         # Simulate quota error by returning None (model_provider returns None on failure)
         mock_provider.call_image_gen.return_value = None
@@ -405,7 +420,7 @@ class TestDmxClientAgnes:
         """Test agnes_review handles HTTP error."""
         mock_provider.call_vision.return_value = None
 
-        from dmx_client import agnes_review
+        from scripts.dmx_client import agnes_review
         result = agnes_review(None, 'https://example.com/img.jpg', retries=1)
         assert result is None
 
@@ -413,7 +428,7 @@ class TestDmxClientAgnes:
         """Test successful image generation."""
         mock_provider.call_image_gen.return_value = 'https://new-image.example.com/1.png'
 
-        from dmx_client import gen_agnes_rate_limited
+        from scripts.dmx_client import gen_agnes_rate_limited
         result = gen_agnes_rate_limited(None, 'https://example.com/img.jpg', retries=1)
         assert result == 'https://new-image.example.com/1.png'
 
@@ -421,7 +436,7 @@ class TestDmxClientAgnes:
         """Test image generation failure returns empty string."""
         mock_provider.call_image_gen.return_value = None
 
-        from dmx_client import gen_agnes_rate_limited
+        from scripts.dmx_client import gen_agnes_rate_limited
         result = gen_agnes_rate_limited(None, 'https://example.com/img.jpg', retries=1)
         assert result == ''
 
@@ -429,12 +444,12 @@ class TestDmxClientAgnes:
         """Test retry on rate limit (current implementation doesn't retry at dmx_client level)."""
         mock_provider.call_image_gen.return_value = 'https://retry.example.com/1.png'
 
-        from dmx_client import gen_agnes_rate_limited
+        from scripts.dmx_client import gen_agnes_rate_limited
         result = gen_agnes_rate_limited(None, 'https://example.com/img.jpg', retries=3)
         assert result == 'https://retry.example.com/1.png'
 
     def test_all_generation_prompts_remove_people(self):
-        from dmx_client import (
+        from scripts.dmx_client import (
             AGNES_MAIN_PROMPT,
             AGNES_VARIANT_PROMPT,
             AGNES_PROMPT,
@@ -458,20 +473,20 @@ class TestSharedConstants:
     """验证 BRANDS 共享常量正确导入且内容一致。"""
 
     def test_brands_not_empty(self):
-        from services.constants import BRANDS
+        from scripts.services.constants import BRANDS
         assert len(BRANDS) > 30
         assert 'bmw' in BRANDS
         assert '丰田' in BRANDS
 
     def test_brands_contains_ebay_specific(self):
-        from services.constants import BRANDS, STRIP_ONLY_BRANDS
+        from scripts.services.constants import BRANDS, STRIP_ONLY_BRANDS
         assert 'joyon' in BRANDS
         assert 'shopee' in BRANDS
         assert 'lazada' in BRANDS
         assert 'diy' in STRIP_ONLY_BRANDS
 
     def test_compatibility_brands_are_separate_from_cleanup_tokens(self):
-        from services.constants import (
+        from scripts.services.constants import (
             COMPATIBILITY_BRANDS,
             STRIP_ONLY_BRANDS,
         )
@@ -481,13 +496,13 @@ class TestSharedConstants:
         assert 'joyon' in STRIP_ONLY_BRANDS
 
     def test_brands_all_lowercase_ascii(self):
-        from services.constants import BRANDS
+        from scripts.services.constants import BRANDS
         for b in BRANDS:
             if b.isascii():
                 assert b == b.lower()
 
     def test_image_policy_detects_any_human_presence(self):
-        from services.constants import (
+        from scripts.services.constants import (
             IMAGE_POLICY_VERSION,
             IMAGE_REMEDIATION_REVIEW_PROMPT,
         )
@@ -503,7 +518,7 @@ class TestPipelineStages:
     """测试管道阶段函数（mock 依赖）。"""
 
     def test_detect_amazon_adapter(self):
-        from adapters import detect_adapter
+        from scripts.adapters import detect_adapter
         # 用正确 header mock
         ws = Mock()
         ws.cell = Mock()
@@ -518,7 +533,7 @@ class TestPipelineStages:
         assert result is not None
 
     def test_rule_strip_brands_removes_bmw(self):
-        from services.constants import BRANDS
+        from scripts.services.constants import BRANDS
         import re
         _BRAND_PATTERN = re.compile('|'.join(re.escape(b) for b in BRANDS), re.IGNORECASE)
         result = _BRAND_PATTERN.sub('', 'BMW Car Parts').strip()
@@ -527,7 +542,7 @@ class TestPipelineStages:
         assert 'Car Parts' in result
 
     def test_brand_re_matches_chinese(self):
-        from services.constants import BRANDS
+        from scripts.services.constants import BRANDS
         import re
         _BRAND_PATTERN = re.compile('|'.join(re.escape(b) for b in BRANDS), re.IGNORECASE)
         result = _BRAND_PATTERN.sub('', '丰田配件')
@@ -611,49 +626,6 @@ class TestPipelineStages:
         assert metrics['by_operation']['vision']['errors'] == 0
         assert metrics['by_operation']['image_gen']['errors'] == 1
 
-    def test_agnes_image_quality_gate_sends_source_and_candidate(self):
-        import scripts.model_provider as mp
-
-        response = Mock(ok=True, status_code=200, text='ok')
-        response.json.return_value = {
-            'choices': [{
-                'message': {
-                    'content': (
-                        '{"accepted": true, "score": 97, '
-                        '"reasons": []}'
-                    ),
-                },
-            }],
-        }
-        provider = mp.AgnesProvider('test-agnes')
-        provider._acquire_text = lambda: None
-        provider._session = Mock()
-        provider._session.post.return_value = response
-
-        result = provider.call_image_quality(
-            'https://img.example/source.jpg',
-            'https://img.example/generated.jpg',
-            context='12 piece flat decal set',
-        )
-
-        assert result == {
-            'accepted': True,
-            'score': 97,
-            'reasons': [],
-        }
-        payload = provider._session.post.call_args.kwargs['json']
-        content = payload['messages'][0]['content']
-        image_urls = [
-            item['image_url']['url']
-            for item in content
-            if item['type'] == 'image_url'
-        ]
-        assert image_urls == [
-            'https://img.example/source.jpg',
-            'https://img.example/generated.jpg',
-        ]
-        assert '12 piece flat decal set' in content[-1]['text']
-
     def test_agnes_image_generation_includes_listing_context(self):
         import scripts.model_provider as mp
 
@@ -674,34 +646,6 @@ class TestPipelineStages:
         payload = provider._session.post.call_args.kwargs['json']
         assert '12Pcs reflective flat wheel decal' in payload['prompt']
         assert 'installation scene only as context' in payload['prompt']
-
-    def test_composite_records_image_quality_gate_metrics(self):
-        import scripts.model_provider as mp
-
-        provider = mp.CompositeProvider({
-            'text_provider': 'deepseek',
-            'vision_provider': 'agnes',
-            'image_gen_provider': 'agnes',
-            'deepseek_key': 'test-deepseek',
-            'agnes_key': 'test-agnes',
-        })
-        vision = Mock()
-        vision.call_image_quality.return_value = {
-            'accepted': True,
-            'score': 95,
-            'reasons': [],
-        }
-        provider._providers['vision'] = vision
-
-        result = provider.call_image_quality(
-            'https://img.example/source.jpg',
-            'https://img.example/generated.jpg',
-        )
-
-        assert result['accepted'] is True
-        metrics = provider.metrics_snapshot()
-        assert metrics['by_operation']['image_quality']['calls'] == 1
-        assert metrics['by_operation']['image_quality']['errors'] == 0
 
     def test_composite_honors_agnes_image_provider_when_gpt_key_exists(self):
         """IMAGE_PROVIDER=agnes must not be overridden just because GPT is configured."""
@@ -944,7 +888,7 @@ class TestPipelineStages:
 
     def test_ebay_person_issue_routes_by_image_role(self, monkeypatch):
         """Test person detection routes by image role."""
-        from pipelines import ebay_stages
+        from scripts.pipelines import ebay_stages
 
         monkeypatch.setattr(ebay_stages, 'review_single', lambda _url: True)
         status = Mock()
@@ -971,7 +915,7 @@ class TestPipelineStages:
 
     def test_ebay_generation_uses_main_and_variant_person_prompts(self, monkeypatch, mock_provider):
         """Test generation uses different prompts for main vs variant images."""
-        from pipelines import ebay_stages
+        from scripts.pipelines import ebay_stages
 
         captured = {}
 
@@ -1011,8 +955,8 @@ class TestPipelineStages:
             self, tmp_path, monkeypatch):
         """Test image policy version invalidates image cache only."""
         import hashlib
-        from pipelines import ebay_stages
-        from services.constants import IMAGE_POLICY_VERSION
+        from scripts.pipelines import ebay_stages
+        from scripts.services.constants import IMAGE_POLICY_VERSION
 
         monkeypatch.setenv('CROSSPILOT_DATA_DIR', str(tmp_path))
         source = tmp_path / 'input.xlsx'
@@ -1041,8 +985,8 @@ class TestPipelineStages:
     def test_ebay_text_cache_version_invalidates_only_text_cache(
             self, tmp_path, monkeypatch):
         import hashlib
-        from pipelines import ebay_stages
-        from services.constants import IMAGE_POLICY_VERSION
+        from scripts.pipelines import ebay_stages
+        from scripts.services.constants import IMAGE_POLICY_VERSION
 
         monkeypatch.setenv('CROSSPILOT_DATA_DIR', str(tmp_path))
         source = tmp_path / 'input.xlsx'
@@ -1070,576 +1014,6 @@ class TestPipelineStages:
         assert cache['desc_cleaned'] == {}
         assert cache['desc_translations'] == {}
         assert cache['text_cache_version'] == ebay_stages._current_text_cache_version()
-
-    def test_amazon_rechecks_old_cache_and_deletes_person_attachment(
-            self, tmp_path, monkeypatch):
-        """Test Amazon rechecks old cache and deletes person attachment."""
-        import scripts.process_amazon as p
-        from unittest.mock import Mock
-
-        # Create mock provider
-        mock_provider = Mock()
-        mock_provider.call_vision.return_value = True
-        mock_provider.call_image_gen.return_value = 'https://generated.example.com/img.png'
-
-        # Mock get_provider at the module level
-        monkeypatch.setattr(p, 'get_provider', lambda: mock_provider)
-
-        person_url = 'https://img/person-attachment.jpg'
-        cache_path = tmp_path / 'amazon-cache.json'
-        cache_path.write_text(json.dumps({
-            'image_policy_version': 'old-policy',
-            'review_results': {person_url: False},
-            'gen_results': {},
-        }), encoding='utf-8')
-        rows = [{
-            'main_img': '',
-            'var_img': '',
-            'var_imgs': [],
-            'extra_imgs': [person_url],
-        }]
-
-        runtime_metrics = {}
-        result = p._stage_review_and_gen(rows, str(cache_path), runtime_metrics=runtime_metrics)
-
-        assert result[0]['extra_imgs'] == []
-        # Verify call_vision was called
-        mock_provider.call_vision.assert_called()
-        assert runtime_metrics['concurrency']['amazon_review']['items'] == 1
-
-    def test_amazon_image_cache_versions_include_registered_prompts(
-            self, monkeypatch):
-        from scripts.pipelines import amazon_review_gen
-
-        calls = []
-
-        def fake_signature(policy, *prompt_ids):
-            calls.append((policy, prompt_ids))
-            return '|'.join(prompt_ids)
-
-        monkeypatch.setattr(
-            amazon_review_gen,
-            'build_runtime_signature',
-            fake_signature,
-        )
-
-        review_version, generation_version = (
-            amazon_review_gen._current_image_cache_versions()
-        )
-
-        assert review_version == 'images.review'
-        assert generation_version == (
-            'images.main_product|images.variant|images.quality_gate'
-        )
-        assert calls[0][1] == ('images.review',)
-
-    def test_amazon_generation_persists_runtime_prompt_version(
-            self, tmp_path):
-        from scripts.pipelines import amazon_review_gen
-
-        provider = Mock()
-        provider.call_image_gen.side_effect = (
-            lambda url, **_kwargs: url.replace(
-                'https://img.example/',
-                'https://generated.example/',
-            )
-        )
-        cache_path = tmp_path / 'amazon-generation-cache.json'
-        rows = [{
-            'main_img': 'https://img.example/main.jpg',
-            'var_img': 'https://img.example/variant.jpg',
-            'var_imgs': ['https://img.example/variant.jpg'],
-            'extra_imgs': [],
-        }]
-
-        result = amazon_review_gen._stage_review_and_gen(
-            rows,
-            str(cache_path),
-            provider_getter=lambda: provider,
-        )
-
-        cache = json.loads(cache_path.read_text(encoding='utf-8'))
-        assert result[0]['main_img'] == (
-            'https://generated.example/main.jpg'
-        )
-        assert result[0]['var_imgs'] == [
-            'https://generated.example/variant.jpg',
-        ]
-        assert len(cache['gen_results']) == 2
-        assert {
-            item['prompt_version']
-            for item in cache['gen_meta'].values()
-        } == {cache['gen_prompt_version']}
-
-    def test_amazon_quality_gate_regenerates_once_then_accepts(
-            self, tmp_path, monkeypatch):
-        from scripts.pipelines import amazon_review_gen
-
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_GATE', '1')
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_REGEN_LIMIT', '1')
-        provider = Mock()
-        provider.call_image_gen.side_effect = [
-            'https://generated.example/distorted.png',
-            'https://generated.example/faithful.png',
-        ]
-        provider.call_image_quality.side_effect = [
-            {
-                'accepted': False,
-                'score': 20,
-                'reasons': ['wrong_product_form'],
-            },
-            {
-                'accepted': True,
-                'score': 96,
-                'reasons': [],
-            },
-        ]
-        cache_path = tmp_path / 'amazon-gated-cache.json'
-        metrics = {}
-        source = 'https://img.example/flat-sticker.jpg'
-        rows = [{
-            'title': 'Flat honeycomb decal sticker',
-            'main_img': source,
-            'var_img': '',
-            'var_imgs': [],
-            'extra_imgs': [],
-        }]
-
-        result = amazon_review_gen._stage_review_and_gen(
-            rows,
-            str(cache_path),
-            runtime_metrics=metrics,
-            provider_getter=lambda: provider,
-        )
-
-        assert result[0]['main_img'] == (
-            'https://generated.example/faithful.png'
-        )
-        assert provider.call_image_gen.call_count == 2
-        assert [
-            call.kwargs['route_offset']
-            for call in provider.call_image_gen.call_args_list
-        ] == [0, 1]
-        assert provider.call_image_quality.call_count == 2
-        assert metrics['image_quality_gate'] == {
-            'checked': 2,
-            'accepted': 1,
-            'rejected': 1,
-            'unavailable': 0,
-            'regenerated': 1,
-            'retained_original': 0,
-            'reasons': {'wrong_product_form': 1},
-        }
-        cache = json.loads(cache_path.read_text(encoding='utf-8'))
-        meta = cache['gen_meta'][f'main:{source}']
-        assert meta['quality_gate']['accepted'] is True
-
-    def test_amazon_flat_product_main_uses_variant_as_reference(
-            self, tmp_path, monkeypatch):
-        from scripts.pipelines import amazon_review_gen
-
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_GATE', '1')
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_REGEN_LIMIT', '0')
-        provider = Mock()
-        provider.call_image_gen.return_value = (
-            'https://generated.example/flat-set.png'
-        )
-        provider.call_image_quality.return_value = {
-            'accepted': True,
-            'score': 98,
-            'reasons': [],
-        }
-        main = 'https://img.example/installed-on-wheel.jpg'
-        variant = 'https://img.example/flat-sticker-set.jpg'
-        rows = [{
-            'title': '12Pcs Wheel Rim Decal Sticker Set',
-            'main_img': main,
-            'var_img': variant,
-            'var_imgs': [variant],
-            'extra_imgs': [],
-        }]
-
-        amazon_review_gen._stage_review_and_gen(
-            rows,
-            str(tmp_path / 'reference-cache.json'),
-            provider_getter=lambda: provider,
-        )
-
-        main_calls = [
-            call for call in provider.call_image_gen.call_args_list
-            if call.kwargs.get('is_variant') is False
-        ]
-        assert len(main_calls) == 1
-        assert main_calls[0].args[0] == variant
-        gate_calls = [
-            call for call in provider.call_image_quality.call_args_list
-            if call.kwargs.get('is_variant') is False
-        ]
-        assert gate_calls[0].args[0] == variant
-
-    def test_amazon_remediation_only_skips_clean_main_images(
-            self, tmp_path, monkeypatch):
-        from scripts.pipelines import amazon_review_gen
-
-        monkeypatch.setenv('CROSSPILOT_IMAGE_REMEDIATE_ONLY', '1')
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_GATE', '0')
-        clean = 'https://img.example/clean.jpg'
-        risky = 'https://img.example/watermarked.jpg'
-        provider = Mock()
-        provider.call_vision.side_effect = (
-            lambda url: url == risky
-        )
-        provider.call_image_gen.return_value = (
-            'https://generated.example/cleaned.jpg'
-        )
-        metrics = {}
-        issues = []
-        rows = [
-            {
-                'title': 'Clean product',
-                'main_img': clean,
-                'var_img': '',
-                'var_imgs': [],
-                'extra_imgs': [],
-            },
-            {
-                'title': 'Watermarked product',
-                'main_img': risky,
-                'var_img': '',
-                'var_imgs': [],
-                'extra_imgs': [],
-            },
-        ]
-
-        result = amazon_review_gen._stage_review_and_gen(
-            rows,
-            str(tmp_path / 'remediate-only-cache.json'),
-            quality_issues=issues,
-            runtime_metrics=metrics,
-            provider_getter=lambda: provider,
-        )
-
-        assert result[0]['main_img'] == clean
-        assert result[1]['main_img'] == (
-            'https://generated.example/cleaned.jpg'
-        )
-        assert provider.call_vision.call_count == 2
-        provider.call_image_gen.assert_called_once()
-        assert not any('图片生成不完整' in issue for issue in issues)
-        assert metrics['image_remediation'] == {
-            'reviewed': 2,
-            'flagged': 1,
-            'clean_retained': 1,
-            'unknown_retained': 0,
-            'attachment_reviewed': 0,
-            'attachment_flagged': 0,
-            'attachment_deleted': 0,
-            'generated_main': 1,
-            'generated_variant': 0,
-            'failed_main': 0,
-            'failed_variant': 0,
-            'generation_url_checked': 0,
-            'generation_url_valid': 0,
-            'generation_url_invalid': 0,
-        }
-
-    def test_amazon_remediation_routes_each_image_role(
-            self, tmp_path, monkeypatch):
-        from scripts.pipelines import amazon_review_gen
-
-        monkeypatch.setenv('CROSSPILOT_IMAGE_REMEDIATE_ONLY', '1')
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_GATE', '0')
-        main = 'https://img.example/risky-main.jpg'
-        clean_extra = 'https://img.example/clean-extra.jpg'
-        risky_extra = 'https://img.example/risky-extra.jpg'
-        clean_variant = 'https://img.example/clean-variant.jpg'
-        risky_variant = 'https://img.example/risky-variant.jpg'
-        risky = {main, risky_extra, risky_variant}
-        provider = Mock()
-        provider.call_vision.side_effect = lambda url: url in risky
-        provider.call_image_gen.side_effect = (
-            lambda url, **_kwargs: url.replace(
-                'https://img.example/',
-                'https://generated.example/',
-            )
-        )
-        rows = [{
-            'title': 'Product',
-            'main_img': main,
-            'var_img': clean_variant,
-            'var_imgs': [clean_variant, risky_variant],
-            'extra_imgs': [clean_extra, risky_extra],
-        }]
-
-        result = amazon_review_gen._stage_review_and_gen(
-            rows,
-            str(tmp_path / 'role-cache.json'),
-            provider_getter=lambda: provider,
-        )
-
-        assert result[0]['main_img'] == (
-            'https://generated.example/risky-main.jpg'
-        )
-        assert result[0]['extra_imgs'] == [clean_extra]
-        assert result[0]['var_imgs'] == [
-            clean_variant,
-            'https://generated.example/risky-variant.jpg',
-        ]
-
-    def test_amazon_generated_url_validation_uses_next_route(
-            self, tmp_path, monkeypatch):
-        from scripts.pipelines import amazon_review_gen
-
-        monkeypatch.setenv('CROSSPILOT_IMAGE_REMEDIATE_ONLY', '1')
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_GATE', '0')
-        monkeypatch.setenv('CROSSPILOT_VALIDATE_GENERATED_IMAGE', '1')
-        source = 'https://img.example/risky.jpg'
-        provider = Mock()
-        provider.call_vision.return_value = True
-        provider.call_image_gen.side_effect = [
-            'https://generated.example/broken.png',
-            'https://generated.example/valid.png',
-        ]
-        monkeypatch.setattr(
-            amazon_review_gen,
-            '_validate_generated_image_url',
-            Mock(side_effect=[
-                (False, 'image_decode_failed'),
-                (True, ''),
-            ]),
-        )
-        metrics = {}
-        rows = [{
-            'title': 'Product',
-            'main_img': source,
-            'var_img': '',
-            'var_imgs': [],
-            'extra_imgs': [],
-        }]
-
-        result = amazon_review_gen._stage_review_and_gen(
-            rows,
-            str(tmp_path / 'validated-cache.json'),
-            runtime_metrics=metrics,
-            provider_getter=lambda: provider,
-        )
-
-        assert result[0]['main_img'].endswith('/valid.png')
-        assert [
-            call.kwargs['route_offset']
-            for call in provider.call_image_gen.call_args_list
-        ] == [0, 1]
-        assert metrics['image_delivery_validation'] == {
-            'enabled': True,
-            'checked': 2,
-            'accepted': 1,
-            'rejected': 1,
-            'reasons': {'image_decode_failed': 1},
-        }
-
-    def test_amazon_all_invalid_generated_urls_retain_original_and_flag(
-            self, tmp_path, monkeypatch):
-        from scripts.pipelines import amazon_review_gen
-
-        monkeypatch.setenv('CROSSPILOT_IMAGE_REMEDIATE_ONLY', '1')
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_GATE', '0')
-        monkeypatch.setenv('CROSSPILOT_VALIDATE_GENERATED_IMAGE', '1')
-        source = 'https://img.example/risky.jpg'
-        provider = Mock()
-        provider.call_vision.return_value = True
-        provider.call_image_gen.side_effect = [
-            f'https://generated.example/broken-{index}.png'
-            for index in range(3)
-        ]
-        monkeypatch.setattr(
-            amazon_review_gen,
-            '_validate_generated_image_url',
-            Mock(return_value=(False, 'image_decode_failed')),
-        )
-        rows = [{
-            'title': 'Product',
-            'main_img': source,
-            'var_img': '',
-            'var_imgs': [],
-            'extra_imgs': [],
-        }]
-
-        result = amazon_review_gen._stage_review_and_gen(
-            rows,
-            str(tmp_path / 'invalid-cache.json'),
-            provider_getter=lambda: provider,
-        )
-
-        assert result[0]['main_img'] == source
-        assert any(
-            issue['code'] == 'main_image_generation_failed'
-            for issue in result[0]['_quality_issues']
-        )
-        cache = json.loads(
-            (tmp_path / 'invalid-cache.json').read_text(
-                encoding='utf-8',
-            )
-        )
-        assert cache['gen_failures'][f'main:{source}']['terminal'] is False
-
-    def test_amazon_remediation_only_ignores_old_clean_generation(
-            self, tmp_path, monkeypatch):
-        from scripts.pipelines import amazon_review_gen
-
-        monkeypatch.setenv('CROSSPILOT_IMAGE_REMEDIATE_ONLY', '1')
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_GATE', '0')
-        source = 'https://img.example/clean-original.jpg'
-        generated = 'https://generated.example/old-copy.png'
-        review_version, generation_version = (
-            amazon_review_gen._current_image_cache_versions()
-        )
-        cache_path = tmp_path / 'clean-old-generation-cache.json'
-        cache_path.write_text(json.dumps({
-            'review_prompt_version': review_version,
-            'gen_prompt_version': generation_version,
-            'review_results': {source: False},
-            'gen_results': {f'main:{source}': generated},
-            'gen_meta': {},
-        }), encoding='utf-8')
-        provider = Mock()
-        rows = [{
-            'title': 'Clean product',
-            'main_img': source,
-            'var_img': '',
-            'var_imgs': [],
-            'extra_imgs': [],
-        }]
-
-        result = amazon_review_gen._stage_review_and_gen(
-            rows,
-            str(cache_path),
-            provider_getter=lambda: provider,
-        )
-
-        assert result[0]['main_img'] == source
-        provider.call_image_gen.assert_not_called()
-
-    def test_amazon_quality_gate_retains_original_after_rejection(
-            self, tmp_path, monkeypatch):
-        from scripts.pipelines import amazon_review_gen
-
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_GATE', '1')
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_REGEN_LIMIT', '0')
-        provider = Mock()
-        provider.call_image_gen.return_value = (
-            'https://generated.example/rigid-shell.png'
-        )
-        provider.call_image_quality.return_value = {
-            'accepted': False,
-            'score': 10,
-            'reasons': ['flat_product_became_rigid'],
-        }
-        cache_path = tmp_path / 'amazon-rejected-cache.json'
-        metrics = {}
-        issues = []
-        source = 'https://img.example/decal-film.jpg'
-        rows = [{
-            'title': 'Flat decal film',
-            'main_img': source,
-            'var_img': '',
-            'var_imgs': [],
-            'extra_imgs': [],
-        }]
-
-        result = amazon_review_gen._stage_review_and_gen(
-            rows,
-            str(cache_path),
-            quality_issues=issues,
-            runtime_metrics=metrics,
-            provider_getter=lambda: provider,
-        )
-
-        assert result[0]['main_img'] == source
-        assert metrics['image_quality_gate']['retained_original'] == 1
-        assert any('质量门禁拒绝' in issue for issue in issues)
-
-    def test_amazon_quality_rejection_is_cached_across_resume(
-            self, tmp_path, monkeypatch):
-        from scripts.pipelines import amazon_review_gen
-
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_GATE', '1')
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_REGEN_LIMIT', '0')
-        source = 'https://img.example/fragile-sticker.jpg'
-        cache_path = tmp_path / 'rejection-resume-cache.json'
-        first = Mock()
-        first.call_image_gen.return_value = (
-            'https://generated.example/distorted.png'
-        )
-        first.call_image_quality.return_value = {
-            'accepted': False,
-            'score': 10,
-            'reasons': ['wrong_item_count'],
-        }
-        rows = [{
-            'title': '12-piece flat sticker',
-            'main_img': source,
-            'var_img': '',
-            'var_imgs': [],
-            'extra_imgs': [],
-        }]
-
-        amazon_review_gen._stage_review_and_gen(
-            [dict(rows[0])],
-            str(cache_path),
-            provider_getter=lambda: first,
-        )
-        cache = json.loads(cache_path.read_text(encoding='utf-8'))
-        assert cache['gen_failures'][f'main:{source}']['terminal'] is True
-
-        resumed = Mock()
-        second_result = amazon_review_gen._stage_review_and_gen(
-            [dict(rows[0])],
-            str(cache_path),
-            provider_getter=lambda: resumed,
-        )
-
-        assert second_result[0]['main_img'] == source
-        resumed.call_image_gen.assert_not_called()
-
-    def test_amazon_quality_gate_outage_fails_closed_but_can_resume(
-            self, tmp_path, monkeypatch):
-        from scripts.model_provider import ProviderUnavailableError
-        from scripts.pipelines import amazon_review_gen
-
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_GATE', '1')
-        monkeypatch.setenv('CROSSPILOT_IMAGE_QUALITY_REGEN_LIMIT', '0')
-        source = 'https://img.example/product.jpg'
-        provider = Mock()
-        provider.call_image_gen.return_value = (
-            'https://generated.example/unverified.png'
-        )
-        provider.call_image_quality.side_effect = ProviderUnavailableError(
-            'quality server unavailable',
-            provider='agnes',
-            operation='image_quality',
-        )
-        cache_path = tmp_path / 'gate-outage-cache.json'
-        metrics = {}
-        rows = [{
-            'title': 'Product',
-            'main_img': source,
-            'var_img': '',
-            'var_imgs': [],
-            'extra_imgs': [],
-        }]
-
-        result = amazon_review_gen._stage_review_and_gen(
-            rows,
-            str(cache_path),
-            runtime_metrics=metrics,
-            provider_getter=lambda: provider,
-        )
-
-        assert result[0]['main_img'] == source
-        assert metrics['image_quality_gate']['unavailable'] == 1
-        assert metrics['image_quality_gate']['retained_original'] == 1
-        cache = json.loads(cache_path.read_text(encoding='utf-8'))
-        assert cache['gen_failures'] == {}
 
     def test_amazon_description_does_not_leak_image_placeholder(self, monkeypatch):
         """Test description cleaning doesn't leak __IMG__ placeholder."""
@@ -1857,8 +1231,8 @@ class TestPipelineStages:
         assert len(row['keywords']) <= 250
 
     def test_amazon_rule_fallback_builds_five_source_grounded_bullets(self):
-        from scripts.pipelines.amazon_stages import (
-            _source_bullet_candidates,
+        from scripts.pipelines.amazon_text import (
+            source_bullet_candidates,
         )
 
         row = {
@@ -1870,7 +1244,7 @@ class TestPipelineStages:
             ),
         }
 
-        bullets = _source_bullet_candidates(row)
+        bullets = source_bullet_candidates(row)
 
         assert len(bullets) == 5
         assert len(set(bullets)) == 5

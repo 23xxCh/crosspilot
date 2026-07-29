@@ -98,3 +98,63 @@ def test_html_contains_chinese_copy_and_every_image():
     assert '主图' in result
     assert '附图 1' in result
     assert '变种图 1' in result
+    assert 'risk-filter' in result
+    assert '导出审核决定.json' in result
+    assert 'delete_product' in result
+    assert 'delete_image' in result
+    assert 'regenerate_image' in result
+    assert 'localStorage' in result
+
+
+def test_review_rows_include_structured_risk_evidence():
+    mapping = {
+        'https://img/main.jpg': {
+            'ok': True,
+            'path': '图片/main.jpg',
+        },
+        'https://img/extra.jpg': {
+            'ok': True,
+            'path': '图片/extra.jpg',
+        },
+        'https://img/variant.jpg': {
+            'ok': True,
+            'path': '图片/variant.jpg',
+        },
+    }
+    audit = {
+        'item-1': [{
+            'url': 'https://img/main.jpg',
+            'role': 'main',
+            'source': 'source',
+            'assessment': {
+                'status': 'risk',
+                'risk_categories': ['brand_logo'],
+                'placement': 'product_surface',
+                'evidence': 'Visible vehicle badge.',
+            },
+            'decision': '',
+            'evidence': 'Visible vehicle badge.',
+        }],
+    }
+
+    rows = build_review_rows(
+        _payload(),
+        [_translation()],
+        mapping,
+        audit_by_product=audit,
+    )
+    result = render_html(rows, {
+        'run_id': 'test-run',
+        'source': 'formal.json',
+        'products': 1,
+        'image_occurrences': 3,
+        'downloaded_unique_images': 3,
+        'unique_images': 3,
+        'quarantined_products': 0,
+    })
+
+    main = rows[0]['images'][0]
+    assert main['assessment']['status'] == 'risk'
+    assert main['evidence'] == 'Visible vehicle badge.'
+    assert 'brand_logo' in result
+    assert 'Visible vehicle badge.' in result

@@ -1,15 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import sys
-from pathlib import Path
-
 from PyInstaller.utils.hooks import collect_submodules
 
-
-root = Path.cwd()
-scripts_dir = root / 'scripts'
-if str(scripts_dir) not in sys.path:
-    sys.path.insert(0, str(scripts_dir))
 
 hiddenimports = [
     'openpyxl',
@@ -22,33 +14,20 @@ hiddenimports = [
     'scripts.pipeline_log',
     'scripts.process_amazon',
     'scripts.process_ebay_tk',
-    'concurrency',
-    'dmx_client',
-    'model_provider',
-    'pipeline_log',
-    'process_amazon',
-    'process_ebay_tk',
 ]
 for package in (
     'crosspilot',
     'web',
-    'scripts.adapters',
-    'scripts.pipelines',
-    'scripts.providers',
-    'scripts.services',
-    'adapters',
-    'pipelines',
-    'providers',
-    'services',
+    'scripts',
 ):
     hiddenimports.extend(collect_submodules(package))
 
 
 a = Analysis(
     ['main_cli.py'],
-    pathex=['.', 'scripts'],
+    pathex=['.'],
     binaries=[],
-    datas=[('web/static', 'web/static'), ('scripts', 'scripts'), ('crosspilot', 'crosspilot'), ('keys.example.json', '.'), ('使用说明.txt', '.')],
+    datas=[('web/static', 'web/static'), ('crosspilot', 'crosspilot'), ('keys.example.json', '.'), ('使用说明.txt', '.')],
     hiddenimports=sorted(set(hiddenimports)),
     hookspath=[],
     hooksconfig={},

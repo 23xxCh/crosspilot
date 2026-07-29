@@ -4,6 +4,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
+from crosspilot.image_risk import assessment_from_legacy
+
 
 class ModelProvider(ABC):
     """Common provider operations used by CompositeProvider."""
@@ -61,6 +63,15 @@ class ModelProvider(ABC):
     @abstractmethod
     def call_vision(self, image_url: str) -> Optional[bool]:
         raise NotImplementedError
+    def assess_image(
+        self,
+        image_url: str,
+        *,
+        confirmation: bool = False,
+    ) -> Optional[dict[str, Any]]:
+        """Return a structured image-risk result when supported."""
+        del confirmation
+        return assessment_from_legacy(self.call_vision(image_url))
 
     @abstractmethod
     def call_image_gen(
@@ -72,14 +83,3 @@ class ModelProvider(ABC):
         route_offset: int = 0,
     ) -> Optional[str]:
         raise NotImplementedError
-
-    def call_image_quality(
-        self,
-        source_url: str,
-        generated_url: str,
-        *,
-        context: str = "",
-        is_variant: bool = False,
-    ) -> Optional[dict[str, Any]]:
-        """Compare a generated image to its source when supported."""
-        return None

@@ -3,17 +3,16 @@
 import os, sys, traceback
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, 'scripts'))
 
 
 def run_pipeline(pipeline, input_path):
     """运行一个管道并返回进程退出码。"""
     try:
         if pipeline == 'amazon':
-            import process_amazon as p
-            p._main(input_path)
+            from scripts import process_amazon as p
+            p.run_amazon_pipeline(input_path)
         elif pipeline == 'ebay':
-            import process_ebay_tk as p
+            from scripts import process_ebay_tk as p
             p._main(input_path)
         else:
             raise ValueError(f"未知管道: {pipeline}")
@@ -28,7 +27,10 @@ def run_pipeline(pipeline, input_path):
 
 def main():
     if len(sys.argv) < 3:
-        print("用法: python runner.py <pipeline> <input_path>", file=sys.stderr)
+        print(
+            "用法: python -m web.runner <pipeline> <input_path>",
+            file=sys.stderr,
+        )
         sys.exit(2)
     sys.exit(run_pipeline(sys.argv[1], sys.argv[2]))
 

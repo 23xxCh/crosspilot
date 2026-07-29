@@ -1,12 +1,9 @@
 """E2E: FastAPI TestClient 测试 Web 上传→查询→下载全流程。"""
-import os, sys, json, time, pytest
+import os, json, time, pytest
 import base64
 import importlib
 import shutil
 import subprocess
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 
 from fastapi.testclient import TestClient
 from web.app import app

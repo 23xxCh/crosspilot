@@ -5,14 +5,9 @@ from __future__ import annotations
 import os
 import re
 import json
-import sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
-
-_SCRIPTS = str(Path(__file__).resolve().parent.parent / 'scripts')
-if _SCRIPTS not in sys.path:
-    sys.path.insert(0, _SCRIPTS)
 
 import requests
 from crosspilot.config import get, get_int

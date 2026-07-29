@@ -3,16 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import os
 import time
-
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-_SCRIPTS = os.path.join(_ROOT, 'scripts')
-if _SCRIPTS not in sys.path:
-    sys.path.insert(0, _SCRIPTS)
 
 # Force UTF-8 output
 if hasattr(sys.stdout, 'reconfigure'):
@@ -26,6 +20,18 @@ if hasattr(sys.stderr, 'reconfigure'):
     except Exception:
         pass
 os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+
+
+def _print_json(value: object) -> None:
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def _load_json_object(path: str) -> dict:
+    with open(path, encoding='utf-8-sig') as handle:
+        value = json.load(handle)
+    if not isinstance(value, dict):
+        raise ValueError(f'JSON 顶层必须是对象: {path}')
+    return value
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -95,6 +101,95 @@ def cmd_health(args: argparse.Namespace) -> int:
     return 0 if all(r.ok for r in results) else 1
 
 
+def cmd_audit(args: argparse.Namespace) -> int:
+    """只读审计 Amazon 图片，并默认生成终审包。"""
+    from scripts.audit_amazon_image_safety import audit_file
+
+    product_ids = (
+        {
+            item.strip()
+            for item in str(args.ids or '').split(',')
+            if item.strip()
+        }
+        or None
+    )
+    result = audit_file(
+        args.input,
+        output_root=args.output_root,
+        cache_path=args.cache,
+        product_ids=product_ids,
+        create_package=not args.no_package,
+    )
+    _print_json({
+        'summary': result['summary'],
+        'report_path': result['report_path'],
+        'package_summary': result['package_summary'],
+    })
+    return 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    """从 Amazon 回填表生成中文文案与全图片终审包。"""
+    from scripts.review_package import export_review
+
+    audit_by_product = {}
+    if args.audit_data:
+        audit_payload = _load_json_object(args.audit_data)
+        candidate = audit_payload.get('audit_by_product')
+        if candidate is None and isinstance(
+            audit_payload.get('products'), dict
+        ):
+            candidate = audit_payload['products']
+        if candidate is not None and not isinstance(candidate, dict):
+            raise ValueError(
+                '--audit-data 必须包含 audit_by_product 对象'
+            )
+        audit_by_product = candidate or {}
+
+    quarantine_products = []
+    if args.quarantine_manifest:
+        quarantine_payload = _load_json_object(
+            args.quarantine_manifest
+        )
+        candidate = quarantine_payload.get('products') or []
+        if not isinstance(candidate, list):
+            raise ValueError(
+                '--quarantine-manifest 的 products 必须是数组'
+            )
+        quarantine_products = candidate
+
+    summary = export_review(
+        args.input,
+        args.output_dir,
+        translate_workers=args.translate_workers,
+        download_workers=args.download_workers,
+        audit_by_product=audit_by_product,
+        quarantine_products=quarantine_products,
+        shared_cache_dir=args.shared_cache_dir,
+        translation_cache_path=args.translation_cache,
+        run_id=args.run_id,
+    )
+    _print_json(summary)
+    return 2 if (
+        summary['translation_failures']
+        or summary['image_failures']
+    ) else 0
+
+
+def cmd_apply(args: argparse.Namespace) -> int:
+    """校验并应用终审包导出的人工审核决定。"""
+    from scripts.apply_amazon_review_decisions import apply_decisions
+
+    result = apply_decisions(
+        args.formal_json,
+        args.decisions_json,
+        review_package=args.review_package,
+        dry_run=args.dry_run,
+    )
+    _print_json(result)
+    return 0
+
+
 def cmd_config(args: argparse.Namespace) -> int:
     """配置管理。"""
     from crosspilot.config import (
@@ -133,9 +228,6 @@ def cmd_config(args: argparse.Namespace) -> int:
         template.append('# === Pipeline ===')
         template.append('# SKIP_IMAGE_GEN=false')
         template.append('# MAX_ROWS=0')
-        template.append('# QUALITY_GATE=false')
-        template.append('# IMAGE_REMEDIATE_ONLY=false')
-        template.append('# IMAGE_QUALITY_REGEN_LIMIT=1')
         template.append('')
         template.append('# === Output ===')
         template.append('# OUTPUT_REPORT=true')
@@ -196,7 +288,7 @@ def _generate_report(output_path: str) -> None:
         print(f'  [WARN] Report generation failed: {e}')
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='crosspilot',
         description='CrossPilot - E-commerce Listing Auto-Cleaning Platform',
@@ -208,6 +300,9 @@ Examples:
   crosspilot run "input.xlsx" --image-only Image review+generation only
   crosspilot run "input.json" --max-rows 50  Test mode (first 50 rows)
   crosspilot run "input.xlsx" --report     Generate review report
+  crosspilot audit "output.json"            Read-only image audit + review package
+  crosspilot review "output.json" "review"  Build review package only
+  crosspilot apply "output.json" "decisions.json" --dry-run
   crosspilot health                        API health check
   crosspilot config --init                 Create .env config file
   crosspilot web                           Start web dashboard
@@ -227,6 +322,60 @@ Examples:
     p_run.add_argument('--force', action='store_true', help='Force run even if health check fails')
     p_run.add_argument('--show-config', action='store_true', help='Show config and exit')
     p_run.set_defaults(func=cmd_run)
+
+    # ── audit ──
+    p_audit = sub.add_parser(
+        'audit',
+        help='Read-only Amazon image audit and review package',
+    )
+    p_audit.add_argument('input', help='Amazon JSON delivery')
+    p_audit.add_argument('--output-root')
+    p_audit.add_argument('--cache')
+    p_audit.add_argument(
+        '--ids',
+        help='Comma-separated product IDs to audit',
+    )
+    p_audit.add_argument(
+        '--no-package',
+        action='store_true',
+        help='Write audit report without the offline review package',
+    )
+    p_audit.set_defaults(func=cmd_audit)
+
+    # ── review ──
+    p_review = sub.add_parser(
+        'review',
+        help='Build Amazon Chinese-copy and all-image review package',
+    )
+    p_review.add_argument('input', help='Amazon JSON delivery')
+    p_review.add_argument('output_dir', help='Review package directory')
+    p_review.add_argument(
+        '--translate-workers',
+        type=int,
+        default=30,
+    )
+    p_review.add_argument(
+        '--download-workers',
+        type=int,
+        default=32,
+    )
+    p_review.add_argument('--audit-data')
+    p_review.add_argument('--quarantine-manifest')
+    p_review.add_argument('--shared-cache-dir')
+    p_review.add_argument('--translation-cache')
+    p_review.add_argument('--run-id')
+    p_review.set_defaults(func=cmd_review)
+
+    # ── apply ──
+    p_apply = sub.add_parser(
+        'apply',
+        help='Validate and apply exported Amazon review decisions',
+    )
+    p_apply.add_argument('formal_json')
+    p_apply.add_argument('decisions_json')
+    p_apply.add_argument('--review-package')
+    p_apply.add_argument('--dry-run', action='store_true')
+    p_apply.set_defaults(func=cmd_apply)
 
     # ── health ──
     p_health = sub.add_parser('health', help='Check API availability')
@@ -267,14 +416,22 @@ Examples:
         show_config=False,
     )))
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    arguments = list(sys.argv[1:] if argv is None else argv)
+
     # No subcommand = run mode for positional input
-    if len(sys.argv) >= 2 and not sys.argv[1].startswith('-') and sys.argv[1] not in {
-        'run', 'health', 'config', 'web', 'ebay', 'amazon', '-h', '--help',
+    if arguments and not arguments[0].startswith('-') and arguments[0] not in {
+        'run', 'audit', 'review', 'apply', 'health', 'config', 'watch',
+        'web', 'ebay', 'amazon',
     }:
         # Treat first arg as input file, insert 'run'
-        sys.argv.insert(1, 'run')
+        arguments.insert(0, 'run')
 
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
     if not hasattr(args, 'func'):
         parser.print_help()
         return 1

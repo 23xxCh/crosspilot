@@ -3,7 +3,7 @@
 eBay/Amazon → TikTok Shop / Amazon 回填表 全自动清洗。
 
 ```
-采集表 .xlsx / Amazon .json → AI 图审 → 删除含人物的问题附图 → 主图/变种去水印和人物 → 翻译/优化 → 描述清洗 → 按原格式回填
+采集表 .xlsx / Amazon .json → 结构化图片安全门 → 风险图删除/修复/隔离 → 翻译/优化 → 描述清洗 → 按原格式回填
 ```
 
 ## 快速开始
@@ -17,11 +17,23 @@ pip install uv && uv sync
 # 启动 Web 平台
 uv run uvicorn web.app:app --port 8765
 
-# 或命令行
-uv run python scripts/process_ebay_tk.py "表3.xlsx"          # eBay→TikTok
-uv run python scripts/process_amazon.py "亚马逊表/采集表.xlsx"  # Amazon→回填表
-uv run python scripts/process_amazon.py "亚马逊表/采集表.json"  # Amazon JSON→回填 JSON
+# 统一命令行
+uv run python -m crosspilot run "表3.xlsx"                    # 自动识别平台
+uv run python -m crosspilot run "亚马逊表/采集表.json"         # 正式处理
+uv run python -m crosspilot audit "亚马逊表/回填表.json"       # 只读审图并生成终审包
+uv run python -m crosspilot review "回填表.json" "终审包"      # 仅生成终审包
+uv run python -m crosspilot apply "回填表.json" "审核决定.json" --dry-run
 ```
+
+`scripts/audit_amazon_image_safety.py`、
+`scripts/export_amazon_cn_review.py` 和
+`scripts/apply_amazon_review_decisions.py` 仍可直接运行，但只作为统一 CLI
+的兼容入口；新功能和参数统一添加到 `crosspilot.cli`。
+
+内部导入统一使用完整包名，例如
+`from scripts.model_provider import get_provider`。生产代码、Web 和测试不得
+自行修改 `sys.path`；仅 `scripts/_bootstrap.py` 为旧
+`python scripts/x.py` 启动方式提供集中兼容。
 
 ## 配置模型与 Prompt
 
@@ -54,12 +66,22 @@ MODEL_PROFILE=production
 
 ```
 scripts/
-├── model_provider.py        # 旧导入兼容门面
+├── model_provider.py        # Provider 稳定门面
 ├── providers/               # 独立客户端、路由、工厂和结构化错误
 ├── dmx_client.py            # 兼容层（包装 model_provider）
 ├── process_ebay_tk.py       # eBay 管道入口
-├── process_amazon.py        # Amazon 编排入口与兼容 API
-├── pipelines/               # eBay/Amazon 阶段实现
+├── process_amazon.py        # Amazon 阶段顺序与兼容 Adapter
+├── review_package/          # 终审包翻译、图片、数据、HTML 与导出编排
+├── export_amazon_cn_review.py # 旧导出脚本兼容 Adapter
+├── pipelines/
+│   ├── amazon_image_safety/   # 审图、缓存、修复与安全门 Interface
+│   ├── amazon_runtime.py      # 单次运行上下文、状态与阶段统计
+│   ├── amazon_delivery.py     # 输出验收、指标、隔离与终审交付
+│   ├── amazon_text/           # 标题、描述、Bullet/关键词深 Module
+│   ├── amazon_quality/        # 审计、事实保护、规范与输出验收策略
+│   ├── amazon_constants.py    # 旧质量规则名称兼容 Adapter
+│   ├── amazon_stages.py       # 旧文本阶段名称兼容 Adapter
+│   └── ...                    # 其余 eBay/Amazon 阶段
 ├── services/                # 抽象层
 └── adapters/                # 表格格式适配器
 
@@ -67,6 +89,7 @@ web/                       FastAPI + vanilla JS SPA
 tests/                     单元、回归与 Web API 测试
 
 crosspilot/
+├── cli.py                  # 运行、审计、终审和决定应用的统一命令接口
 ├── model_profiles.json    # 模型、端点和回退链
 ├── model_registry.py      # 模型配置校验与解析
 ├── prompt_registry.py     # Prompt 加载、渲染与签名
@@ -81,11 +104,12 @@ crosspilot/
 9. 视频清空 10. 价格改名+保存
 
 ### Amazon→回填表 (6 阶段)
-1. 读取表格 2. 审图+生图 3. 标题优化
+1. 读取表格 2. 结构化图片初审、风险修复与隔离 3. 标题优化
 4. 描述清洗 5. Bullet+关键词 6. 写回填表
 
-如果存在未完成图审、生图失败或必填内容缺失，输出仍会保留用于人工修正，
-但任务状态为“待复核”，不会计入成功任务。
+Amazon 附图风险或无法判断时直接删除；主图/变种图修复失败、复审仍有风险
+或无法判断时隔离整个商品，不把风险原图写入正式回填表。每次任务另行生成
+离线终审包，供人工确认、纠错和导出审核决定。
 
 ## 配置
 

@@ -9,7 +9,6 @@ pickle target 函数，子进程重新 import 整个 jobs 模块，在 uvicorn �
 import atexit, os, sys, json, threading, queue as _q, time, subprocess, glob, hashlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, 'scripts'))
 from web import store  # noqa: E402
 DATA_DIR = os.environ.get('CROSSPILOT_DATA_DIR') or os.path.join(ROOT, 'data')
 
@@ -170,7 +169,7 @@ def _py_cmd():
     """返回开发模式或 PyInstaller 模式的独立任务进程命令。"""
     if getattr(sys, 'frozen', False):
         return [sys.executable, '--run-job']
-    return ['uv', 'run', 'python', '-u', os.path.join(ROOT, 'web', 'runner.py')]
+    return ['uv', 'run', 'python', '-u', '-m', 'web.runner']
 
 def _monitor_tick(last_snap):
     done_ids = []

@@ -8,8 +8,11 @@ import time
 
 import openpyxl
 
-from services.amazon_json import load_columnar_json, write_output_json
-from .amazon_constants import _add_quality_issue, _validate_amazon_rows
+from ..services.amazon_json import load_columnar_json, write_output_json
+from .amazon_quality import (
+    add_quality_issue as _add_quality_issue,
+    validate_amazon_rows as _validate_amazon_rows,
+)
 
 
 def _row_limits():

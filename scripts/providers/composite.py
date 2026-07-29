@@ -200,9 +200,7 @@ class CompositeProvider(ModelProvider):
         raise ValueError(f"未配置生图模型提供商: {provider}")
 
     def _provider_name(self, operation: str) -> str:
-        provider = self._providers.get(
-            "vision" if operation == "image_quality" else operation
-        )
+        provider = self._providers.get(operation)
         if provider is None:
             return "unknown"
         name = provider.__class__.__name__.replace(
@@ -513,6 +511,21 @@ class CompositeProvider(ModelProvider):
             **kwargs,
         )
 
+    def assess_image(
+        self,
+        image_url: str,
+        *,
+        confirmation: bool = False,
+        **kwargs,
+    ) -> Optional[dict]:
+        return self._call(
+            "vision",
+            self._providers["vision"].assess_image,
+            image_url,
+            confirmation=confirmation,
+            **kwargs,
+        )
+
     def call_image_gen(
         self,
         image_url: str,
@@ -572,22 +585,3 @@ class CompositeProvider(ModelProvider):
             return None
 
         return self._call("image_gen", call_with_fallbacks)
-
-    def call_image_quality(
-        self,
-        source_url: str,
-        generated_url: str,
-        *,
-        context: str = "",
-        is_variant: bool = False,
-        **kwargs,
-    ) -> Optional[dict]:
-        return self._call(
-            "image_quality",
-            self._providers["vision"].call_image_quality,
-            source_url,
-            generated_url,
-            context=context,
-            is_variant=is_variant,
-            **kwargs,
-        )

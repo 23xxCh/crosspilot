@@ -16,6 +16,18 @@ def test_prompt_registry_loads_and_renders_named_prompt():
     assert "For Example Product 12V" in rendered
 
 
+def test_amazon_title_prompt_enforces_brand_format_and_total_length():
+    from crosspilot.prompt_registry import get_prompt_registry
+
+    prompt = get_prompt_registry().get("amazon.title_optimize")
+
+    assert "Generic [Product] for [Compatible Brand/Model]" in prompt
+    assert "75 characters or fewer" in prompt
+    assert "counting every letter" in prompt
+    assert "Aim for 70-75 characters" in prompt
+    assert "Never add a brand, model, feature" in prompt
+
+
 def test_prompt_registry_rejects_unknown_prompt():
     from crosspilot.prompt_registry import PromptNotFoundError, get_prompt_registry
 
@@ -101,18 +113,6 @@ def test_image_generation_prompt_preserves_product_intrinsic_artwork(
     assert "flat sticker" in prompt
     assert "external watermark" in prompt
     assert "no readable text of any kind" not in prompt
-
-
-def test_image_quality_gate_prompt_checks_semantic_fidelity():
-    from crosspilot.prompt_registry import get_prompt_registry
-
-    prompt = get_prompt_registry().get("images.quality_gate").lower()
-
-    assert "source reference" in prompt
-    assert "generated candidate" in prompt
-    assert "exact item count" in prompt
-    assert "flat" in prompt
-    assert '"accepted"' in prompt
 
 
 def _editable_registry(tmp_path, *, profile="test"):

@@ -1,9 +1,8 @@
 """E2E: Mock 全链路管道测试 — 不依赖任何 API key，验证管道逻辑正确性。"""
-import os, sys, json, pytest
+import os, json, pytest
 from unittest.mock import patch, Mock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
-import process_ebay_tk
+from scripts import process_ebay_tk
 import openpyxl
 
 
@@ -25,7 +24,7 @@ class TestMockFullPipeline:
 
     def test_pipeline_mocked_all_clean(self, sample_xlsx_path, monkeypatch):
         """所有图审返回 False（无水印），翻译返回越南语，验证管道输出。"""
-        from pipelines import ebay_stages, ebay_shared
+        from scripts.pipelines import ebay_stages, ebay_shared
 
         # Mock 图审：全部返回 False（无水印，不生图）
         monkeypatch.setattr(ebay_stages, 'review_single', Mock(return_value=False))
@@ -54,7 +53,7 @@ class TestMockFullPipeline:
 
     def test_pipeline_mocked_with_watermarks(self, sample_xlsx_path, monkeypatch):
         """图审返回 True（有水印），验证生图 mock 被调用，输出仍正常。"""
-        from pipelines import ebay_stages
+        from scripts.pipelines import ebay_stages
 
         monkeypatch.setattr(ebay_stages, 'review_single', Mock(return_value=True))
         gen_calls = []
@@ -76,7 +75,7 @@ class TestMockFullPipeline:
 
     def test_pipeline_output_valid_xlsx(self, sample_xlsx_path, monkeypatch):
         """Mock 管道，验证输出是可打开的有效 xlsx。"""
-        from pipelines import ebay_stages
+        from scripts.pipelines import ebay_stages
         monkeypatch.setattr(ebay_stages, 'review_single', Mock(return_value=False))
         monkeypatch.setattr(ebay_stages, '_gen_image', Mock(return_value='https://x.com/1.png'))
         monkeypatch.setattr(ebay_stages, 'batch_translate_texts',
@@ -97,7 +96,7 @@ class TestMockFullPipeline:
 
     def test_pipeline_amazon_mocked(self, monkeypatch):
         """Mock Amazon 管道，验证 _main 返回输出路径。"""
-        import process_amazon
+        from scripts import process_amazon
         # Mock 所有阶段（各阶段签名不同）
         monkeypatch.setattr(
             process_amazon,
@@ -171,7 +170,7 @@ class TestPipelineEdgeCases:
 
     def test_brands_shared_constant(self):
         """验证 BRANDS 常量在两个管道中一致。"""
-        from services.constants import BRANDS
+        from scripts.services.constants import BRANDS
         assert len(BRANDS) > 30
         assert 'bmw' in BRANDS
         assert '丰田' in BRANDS

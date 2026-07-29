@@ -3,8 +3,11 @@
 import json, os, sys, time, glob, requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from model_provider import get_provider
+if __package__ in {None, ""}:
+    from _bootstrap import ensure_package_imports
+    ensure_package_imports()
+
+from scripts.model_provider import get_provider
 
 OUT = r'E:\AI WORK\ebay -skill\图片和翻译文件'
 IMG_DIR = os.path.join(OUT, '图片')

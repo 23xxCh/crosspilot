@@ -11,18 +11,17 @@ import hashlib
 import glob
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import openpyxl
 from crosspilot.prompt_registry import (
     build_runtime_signature,
     get_prompt_registry,
 )
-from adapters import detect_adapter
-from pipeline_log import log as _log, new_request_id, PipelineMetrics
-from services.constants import IMAGE_POLICY_VERSION
-from model_provider import ProviderQuotaError
-from concurrency import adaptive_map
-from pipelines.ebay_shared import (
+from ..adapters import detect_adapter
+from ..pipeline_log import log as _log, new_request_id, PipelineMetrics
+from ..services.constants import IMAGE_POLICY_VERSION
+from ..model_provider import ProviderQuotaError
+from ..concurrency import adaptive_map
+from .ebay_shared import (
     # sessions & keys
     reload_credentials, get_provider,
     # constants

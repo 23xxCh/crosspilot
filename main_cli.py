@@ -28,12 +28,6 @@ if not os.path.exists(KEYS_PATH):
 os.environ['CROSSPILOT_DATA_DIR'] = os.path.join(APPDATA, 'data')
 os.environ['CROSSPILOT_KEYS_PATH'] = KEYS_PATH
 
-# PyInstaller 把 --add-data 的文件解压到 sys._MEIPASS，加入搜索路径
-if getattr(sys, 'frozen', False):
-    sys.path.insert(0, sys._MEIPASS)
-    sys.path.insert(0, os.path.join(sys._MEIPASS, 'scripts'))
-sys.path.insert(0, BASE_DIR)
-
 if len(sys.argv) >= 4 and sys.argv[1] == '--run-job':
     from web.runner import run_pipeline
     raise SystemExit(run_pipeline(sys.argv[2], sys.argv[3]))

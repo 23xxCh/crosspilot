@@ -1,11 +1,10 @@
 """FastAPI app：上传/历史/详情/SSE/下载/设置。复用 process_ebay_tk 管道。"""
 from contextlib import asynccontextmanager
-import base64, binascii, errno, os, sys, json, uuid, shutil, time, re, secrets, zipfile, glob as _glob
+import base64, binascii, errno, os, json, uuid, shutil, time, re, secrets, zipfile, glob as _glob
 from urllib.parse import quote
 from scripts.pipeline_log import log as _log
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, 'scripts'))
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Query
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse

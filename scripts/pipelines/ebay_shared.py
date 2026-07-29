@@ -4,25 +4,23 @@
 import json
 import os
 import re
-import sys
 import time
 import tempfile
 import threading
 
 from crosspilot.prompt_registry import get_prompt_registry
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from pipeline_log import log as _log, new_request_id, PipelineMetrics
-from model_provider import (
+from ..pipeline_log import log as _log, new_request_id, PipelineMetrics
+from ..model_provider import (
     ProviderQuotaError,
     get_provider,
     reload_provider as _reload_provider,
 )
-from services import TranslationService
-from services.constants import compile_brand_pattern
+from ..services import TranslationService
+from ..services.constants import compile_brand_pattern
 import requests as _requests
 from requests.adapters import HTTPAdapter as _HTTPAdapter
-from concurrency import configured_concurrency
+from ..concurrency import configured_concurrency
 
 # === 常量 ===
 TMP_DIR = tempfile.gettempdir()

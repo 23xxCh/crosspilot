@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import json
 import time
 import shutil
@@ -11,8 +10,6 @@ from pathlib import Path
 from typing import Set
 
 _ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT / 'scripts') not in sys.path:
-    sys.path.insert(0, str(_ROOT / 'scripts'))
 
 
 class FolderWatcher:
@@ -76,7 +73,7 @@ class FolderWatcher:
 
     def _process(self, input_file: Path):
         """Process one file through the pipeline."""
-        from process_amazon import _main_impl
+        from scripts.process_amazon import run_amazon_pipeline
 
         stem = input_file.stem
         processing_path = self.processing_dir / input_file.name
@@ -89,7 +86,7 @@ class FolderWatcher:
             # Run pipeline
             print(f'[watcher] Processing: {input_file.name}')
             t0 = time.time()
-            output = _main_impl(str(processing_path))
+            output = run_amazon_pipeline(str(processing_path))
             elapsed = time.time() - t0
 
             # Move output to output dir

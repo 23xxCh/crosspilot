@@ -1,8 +1,8 @@
 """Image review service for watermark, brand overlay, and person detection.
 使用 model_provider 进行图审，与具体模型解耦。
 """
-from pipeline_log import log as _log
-from model_provider import get_provider
+from ..pipeline_log import log as _log
+from ..model_provider import get_provider
 
 
 class ImageReviewService:

@@ -20,9 +20,7 @@ class TestConfigPriority:
         # 未配置的字段应使用默认值
         assert cfg['TEXT_PROVIDER'] == 'deepseek'
         assert cfg['IMAGE_GEN_CONCURRENCY'] == '20'
-        assert cfg['QUALITY_GATE'] == 'false'
         assert cfg['OUTPUT_REPORT'] == 'true'
-        assert cfg['IMAGE_GEN_ATTEMPTS'] == '3'
         assert cfg['AGNES_503_RETRY_LIMIT'] == '1'
         assert cfg['AGNES_503_BACKOFF_MAX_S'] == '8'
         assert cfg['AGNES_503_CIRCUIT_COOLDOWN_S'] == '120'

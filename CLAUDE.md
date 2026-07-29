@@ -12,7 +12,9 @@ CrossPilot - 跨境电商 Listing 全自动清洗平台。从 eBay/Shopee/Amazon
 # === 统一 CLI（推荐）===
 uv run python -m crosspilot ebay "输入.xlsx"        # eBay→TikTok 清洗
 uv run python -m crosspilot amazon "输入.xlsx"      # Amazon 采集表回填
-uv run python -m crosspilot gen "输入.json" -c 20   # 纯图生图（Agnes）
+uv run python -m crosspilot audit "回填表.json"      # 只读图片审计+终审包
+uv run python -m crosspilot review "回填表.json" "终审包"
+uv run python -m crosspilot apply "回填表.json" "审核决定.json" --dry-run
 uv run python -m crosspilot web -p 8765             # Web 管理平台
 
 # === 旧式直接调用（兼容）===
@@ -33,18 +35,40 @@ uv run pyinstaller --clean --noconfirm CrossPilot.spec
 
 ```
 scripts/
-├── model_provider.py        # 旧导入兼容门面
+├── model_provider.py        # Provider 稳定门面
 ├── providers/               # Provider 客户端、路由、工厂和结构化错误
 ├── dmx_client.py            # 兼容层（包装 model_provider，保持旧接口）
 ├── process_ebay_tk.py       # eBay 管道入口
-├── process_amazon.py        # Amazon 编排入口与兼容 API
+├── process_amazon.py        # Amazon 阶段顺序与兼容 Adapter
+├── review_package/          # 终审包深 Module
+│   ├── translation.py       # 中文翻译与可续跑缓存
+│   ├── assets.py            # 图片下载、解码与共享缓存
+│   ├── rows.py              # 正式/隔离商品终审数据模型
+│   ├── html_renderer.py     # 离线审核交互页面
+│   └── exporter.py          # 导出编排
+├── export_amazon_cn_review.py # 旧脚本兼容 Adapter
 ├── pipelines/               # eBay/Amazon 阶段实现
 │   ├── ebay_shared.py       # eBay 共享模块（使用 model_provider）
 │   ├── ebay_stages.py       # eBay 阶段函数
-│   ├── amazon_constants.py  # Amazon 清洗规则与质量校验
+│   ├── amazon_quality/      # Amazon 质量策略深 Module
+│   │   ├── rules.py         # 清洗正则、事实规格与文本指纹
+│   │   ├── audit.py         # 逐行审计、降级问题与复核摘要
+│   │   ├── listing.py       # Bullet/关键词确定性规范
+│   │   └── validation.py    # 正式 Amazon 行验收
+│   ├── amazon_constants.py  # 旧质量规则名称兼容 Adapter
 │   ├── amazon_io.py         # Amazon 输入、输出与交付校验
-│   ├── amazon_stages.py     # Amazon 文本处理阶段
-│   └── amazon_review_gen.py # Amazon 审图与生图阶段
+│   ├── amazon_text/         # Amazon 文本阶段深 Module
+│   │   ├── titles.py        # 标题规范、流量优化与事实保护
+│   │   ├── descriptions.py  # 描述清理、事实保护与脏数据隔离
+│   │   └── listing_content.py # Bullet、关键词生成与规则补全
+│   ├── amazon_stages.py     # 旧文本阶段名称兼容 Adapter
+│   ├── amazon_image_safety/   # Amazon 图片安全深 Module
+│   │   ├── assessment.py      # 结构化审图与 URL/图片解码验证
+│   │   ├── cache.py           # 策略签名缓存与人工覆盖
+│   │   ├── remediation.py     # 生图、下载验证和生成图复审
+│   │   └── gate.py            # fail-closed 隔离决策与指标编排
+│   ├── amazon_runtime.py    # 运行上下文、状态与阶段统计
+│   └── amazon_delivery.py   # 正式输出、隔离、指标与终审交付
 ├── services/                # 抽象层
 │   ├── review.py            # 图审服务（使用 model_provider）
 │   ├── translate.py         # 翻译服务（使用 model_provider）
@@ -52,13 +76,31 @@ scripts/
 └── adapters/                # 表格格式适配器
 ```
 
+`crosspilot/cli.py` 是用户命令的唯一参数解析入口。
+Amazon 生产调用统一使用 `process_amazon.run_amazon_pipeline()`；
+`_main()` 和 `_main_impl()` 仅为旧调用方保留。
+Amazon 文本生产调用统一使用 `scripts.pipelines.amazon_text` Interface；
+不要在 `amazon_stages.py` 兼容 Adapter 中添加新逻辑。
+Amazon 质量规则生产调用统一使用 `scripts.pipelines.amazon_quality`
+Interface；不要在 `amazon_constants.py` 兼容 Adapter 中添加新逻辑。
+Amazon 图片生产调用统一使用
+`scripts.pipelines.amazon_image_safety` Interface；调用方不得绕过
+`gate.py` 的 fail-closed 隔离决策。
+`audit_amazon_image_safety.py`、`export_amazon_cn_review.py` 和
+`apply_amazon_review_decisions.py` 的 `main()` 只是兼容 Adapter；不要在这些
+脚本中新增命令参数，应修改 `crosspilot/cli.py`。
+
+所有内部导入必须使用 `scripts.*` 完整包名或包内相对导入。不要修改
+`sys.path`，也不要恢复顶层 `model_provider`、`pipelines`、`services`
+等别名。仅 `scripts/_bootstrap.py` 可以为旧文件式入口调整导入路径。
+
 ## 核心管道 `process_ebay_tk.py`
 
 **10 阶段**：提取URL → 图审 → 图生图 → 附图清空 → 标题翻译 → 描述AI清洗 → 描述翻译 → 嵌入注入图片 → 视频模板清理 → 价格列保存
 
 **API 调用层**（使用 model_provider，配置驱动）：
 ```python
-from model_provider import get_provider
+from scripts.model_provider import get_provider
 
 provider = get_provider()  # 自动加载生效配置和模型路由
 

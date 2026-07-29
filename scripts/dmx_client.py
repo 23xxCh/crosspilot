@@ -4,11 +4,11 @@
 新代码应该直接使用 model_provider。
 """
 from __future__ import annotations
-import sys
-import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from model_provider import get_provider, reload_provider as _reload_provider
+from .model_provider import (
+    get_provider,
+    reload_provider as _reload_provider,
+)
 from crosspilot.model_registry import get_model_registry
 from crosspilot.prompt_registry import get_prompt_registry
 

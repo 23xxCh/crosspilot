@@ -1,9 +1,7 @@
 """Core pipeline integration tests. Uses data/sample_small.xlsx (2 rows)."""
-import os, sys, shutil, json, time, pytest
+import os, shutil, json, time, pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import process_ebay_tk
+from scripts import process_ebay_tk
 from web import store
 
 
@@ -116,7 +114,10 @@ class TestTranslateText:
         from unittest.mock import Mock
         mock_provider = Mock()
         mock_provider.call_text.return_value = "这是汽车配件"  # 返回原文（含中文）
-        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
+        monkeypatch.setattr(
+            'scripts.services.translate.get_provider',
+            lambda: mock_provider,
+        )
         result = process_ebay_tk.translate_text("这是汽车配件", process_ebay_tk.TITLE_TRANSLATE_PROMPT)
         assert process_ebay_tk._CHINESE_RE.search(result), f"应保留中文, got: {result}"
 
@@ -125,7 +126,10 @@ class TestTranslateText:
         from unittest.mock import Mock
         mock_provider = Mock()
         mock_provider.call_text.return_value = None
-        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
+        monkeypatch.setattr(
+            'scripts.services.translate.get_provider',
+            lambda: mock_provider,
+        )
         result = process_ebay_tk.translate_text("这是产品", process_ebay_tk.TITLE_TRANSLATE_PROMPT)
         assert process_ebay_tk._CHINESE_RE.search(result)
 
@@ -134,7 +138,10 @@ class TestTranslateText:
         from unittest.mock import Mock
         mock_provider = Mock()
         mock_provider.call_text.return_value = "Phụ kiện ô tô 2024"
-        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
+        monkeypatch.setattr(
+            'scripts.services.translate.get_provider',
+            lambda: mock_provider,
+        )
         result = process_ebay_tk.translate_text("Car Accessories 2024", process_ebay_tk.TITLE_TRANSLATE_PROMPT)
         assert result == "Phụ kiện ô tô 2024"
         mock_provider.call_text.assert_called_once()
@@ -144,7 +151,10 @@ class TestTranslateText:
         from unittest.mock import Mock
         mock_provider = Mock()
         mock_provider.call_text.return_value = "Sản phẩm 汽车 用品"
-        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
+        monkeypatch.setattr(
+            'scripts.services.translate.get_provider',
+            lambda: mock_provider,
+        )
         result = process_ebay_tk.translate_text("这是产品", process_ebay_tk.TITLE_TRANSLATE_PROMPT)
         assert process_ebay_tk._CHINESE_RE.search(result)
 
@@ -174,7 +184,10 @@ class TestBatch:
         from unittest.mock import Mock
         mock_provider = Mock()
         mock_provider.call_text.return_value = 'NOT JSON'
-        monkeypatch.setattr('services.translate.get_provider', lambda: mock_provider)
+        monkeypatch.setattr(
+            'scripts.services.translate.get_provider',
+            lambda: mock_provider,
+        )
         result = process_ebay_tk.batch_translate_texts(["test text"])
         assert result == {}  # 解析失败返回空
 
