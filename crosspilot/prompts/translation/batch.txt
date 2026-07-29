@@ -1,0 +1,10 @@
+Translate the following {count} texts to Vietnamese.
+Rules:
+- Preserve ALL product info: material, dimensions, specs, color, quantity, model numbers
+- Keep HTML tags (p, ul, li, br, img) and punctuation intact
+- Keep __IMG__ placeholder unchanged
+- If already Vietnamese, return unchanged
+Return JSON array: [{{"index": N, "translation": "..."}}] only. No other text.
+
+Texts:
+{texts}

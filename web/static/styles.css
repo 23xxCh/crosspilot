@@ -630,3 +630,20 @@ select{font-family:var(--font)}
   margin: 0 auto;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Health dots in dashboard stats */
+.health-row {
+  display: flex; gap: 6px; margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--border); align-items: center;
+}
+.health-dot {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 6px;
+  font-size: 10px; font-weight: 700; color: #fff; cursor: default;
+  background: var(--text-muted); transition: background .3s;
+}
+.health-dot.ok { background: #10b981; }
+.health-dot.fail { background: #ef4444; animation: pulse-fail 2s infinite; }
+@keyframes pulse-fail {
+  0%, 100% { opacity: 1; } 50% { opacity: .5; }
+}

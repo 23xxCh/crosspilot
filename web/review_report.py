@@ -441,6 +441,14 @@ def build_review_report_rows(
     _append_metric(rows, 'api_calls', metrics.get('api_calls', ''))
     _append_metric(rows, 'api_success_rate', _pct(metrics.get('api_success_rate')))
     _append_metric(rows, 'http_attempts', metrics.get('http_attempts', ''))
+    rate_wait_s = metrics.get('rate_wait_s', '')
+    _append_metric(
+        rows,
+        'rate_wait_s',
+        rate_wait_s,
+        '表示为遵守 RPM 主动等待的时间；很高时说明瓶颈在供应商限速，不是本地并发',
+        'warning' if _num(rate_wait_s, 0) > 300 else 'info',
+    )
     http_retries = metrics.get('http_retries', '')
     _append_metric(
         rows,
@@ -492,7 +500,9 @@ def build_review_report_rows(
             ),
             'value': (
                 f"reductions={values.get('reductions', 0)}; "
-                f"failures={values.get('failures', 0)}"
+                f"failures={values.get('failures', 0)}; "
+                f"attempts={values.get('attempts', 1)}; "
+                f"attempted_items={values.get('attempted_items', values.get('items', ''))}"
             ),
             'action': '失败率高时已自动降并发，复核 API 稳定性',
         })
@@ -539,6 +549,7 @@ def build_review_data(
         'audit_item_count': len(audit_rows),
         'warning_metric_count': len(warning_metrics),
         'http_retries': metrics.get('http_retries', 0),
+        'rate_wait_s': metrics.get('rate_wait_s', 0),
         'circuit_open': metrics.get('circuit_open', 0),
         'concurrency_reductions': concurrency.get('reductions', 0),
         'cache_hit_rate': _pct(cache.get('hit_rate')),

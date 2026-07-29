@@ -23,6 +23,7 @@ AMAZON_JSON_OUTPUT_FIELDS = (
     'Bullet Point4',
     'Bullet Point5',
     '关键词信息',
+    '有问题的产品id',
 )
 
 _IMAGE_FIELDS = ('产品图片链接', '变种图片链接')
@@ -57,7 +58,7 @@ def validate_columnar_payload(
     mismatched = [
         f'{field}={len(payload[field])}'
         for field in required_fields
-        if len(payload[field]) != row_count
+        if field != '有问题的产品id' and len(payload[field]) != row_count
     ]
     if mismatched:
         raise ValueError(
@@ -114,8 +115,11 @@ def _unique_urls(values) -> list[str]:
     ))
 
 
+_removed_dirty_ids: list[str] = []
+
 def build_output_payload(rows: list[dict]) -> dict:
     """Build the exact column order and nested image shape of the output template."""
+    global _removed_dirty_ids
     payload = {
         '商品id': [],
         '产品标题': [],
@@ -128,7 +132,9 @@ def build_output_payload(rows: list[dict]) -> dict:
         'Bullet Point4': [],
         'Bullet Point5': [],
         '关键词信息': [],
+        '有问题的产品id': [],
     }
+    problem_ids = []
 
     for row in rows:
         bullets = row.get('bullets')
@@ -142,7 +148,13 @@ def build_output_payload(rows: list[dict]) -> dict:
             row.get('main_img', ''),
             *(row.get('extra_imgs') or []),
         ])
-        variant_images = _unique_urls(row.get('var_imgs') or [])
+        # Variant positions are meaningful. Preserve duplicate source
+        # occurrences and order; only normalize empty/whitespace values.
+        variant_images = [
+            value.strip()
+            for value in (row.get('var_imgs') or [])
+            if isinstance(value, str) and value.strip()
+        ]
 
         payload['商品id'].append(str(row.get('id') or ''))
         payload['产品标题'].append(str(row.get('title') or ''))
@@ -152,7 +164,12 @@ def build_output_payload(rows: list[dict]) -> dict:
         for index in range(5):
             payload[f'Bullet Point{index + 1}'].append(bullets[index])
         payload['关键词信息'].append(str(row.get('keywords') or ''))
+        # Collect problem IDs
+        issues = row.get('_quality_issues', [])
+        if issues:
+            problem_ids.append(str(row.get('id') or ''))
 
+    payload['有问题的产品id'] = problem_ids + list(_removed_dirty_ids)
     validate_columnar_payload(
         payload,
         required_fields=AMAZON_JSON_OUTPUT_FIELDS,

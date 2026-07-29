@@ -96,11 +96,18 @@ class PipelineMetrics:
         self.http_attempts = 0
         self.http_errors = 0
         self.http_retries = 0
+        self.rate_wait_s = 0.0
         self.http_status = {}
         self.circuit_open = 0
+        self.fallback_attempts = 0
+        self.fallback_successes = 0
+        self.fallback_failures = 0
+        self.fallback_routes = {}
         self.cache = {}
         self.concurrency = {}
         self.quality = {}
+        self.image_quality_gate = {}
+        self.image_remediation = {}
         self.t_start = time.time()
 
     def record_stage(self, name, duration_s, item_count, success_count=None):
@@ -131,8 +138,25 @@ class PipelineMetrics:
         self.http_attempts = int(metrics.get('http_attempts') or 0)
         self.http_errors = int(metrics.get('http_errors') or 0)
         self.http_retries = int(metrics.get('http_retries') or 0)
+        self.rate_wait_s = float(metrics.get('rate_wait_s') or 0)
         self.http_status = metrics.get('http_status') or {}
         self.circuit_open = int(metrics.get('circuit_open') or 0)
+        self.fallback_attempts = int(
+            metrics.get('fallback_attempts') or 0
+        )
+        self.fallback_successes = int(
+            metrics.get('fallback_successes') or 0
+        )
+        self.fallback_failures = int(
+            metrics.get('fallback_failures') or 0
+        )
+        self.fallback_routes = {
+            str(route): dict(values)
+            for route, values in (
+                metrics.get('fallback_routes') or {}
+            ).items()
+            if isinstance(values, dict)
+        }
 
     def set_cache_metrics(self, metrics):
         """Attach cache hit/miss evidence collected by pipeline stages."""
@@ -172,12 +196,15 @@ class PipelineMetrics:
                 continue
             item = {
                 'items': int(values.get('items') or 0),
+                'attempted_items': int(values.get('attempted_items') or values.get('items') or 0),
+                'attempts': int(values.get('attempts') or 1),
                 'initial_workers': int(values.get('initial_workers') or 0),
                 'final_workers': int(values.get('final_workers') or 0),
                 'min_workers': int(values.get('min_workers') or 0),
                 'reductions': int(values.get('reductions') or 0),
                 'recoveries': int(values.get('recoveries') or 0),
                 'failures': int(values.get('failures') or 0),
+                'backoff_total_s': float(values.get('backoff_total_s') or 0),
                 'events': list(values.get('events') or [])[:10],
             }
             reductions += item['reductions']
@@ -202,6 +229,50 @@ class PipelineMetrics:
             'truncated': bool(validation.get('truncated')),
         }
 
+    def set_image_quality_gate_metrics(self, metrics):
+        """Attach generated-image gate evidence."""
+        if not isinstance(metrics, dict):
+            return
+        checked = int(metrics.get('checked') or 0)
+        accepted = int(metrics.get('accepted') or 0)
+        rejected = int(metrics.get('rejected') or 0)
+        self.image_quality_gate = {
+            'checked': checked,
+            'accepted': accepted,
+            'rejected': rejected,
+            'accept_rate': round(accepted / checked, 3) if checked else None,
+            'unavailable': int(metrics.get('unavailable') or 0),
+            'regenerated': int(metrics.get('regenerated') or 0),
+            'retained_original': int(
+                metrics.get('retained_original') or 0
+            ),
+            'reasons': dict(metrics.get('reasons') or {}),
+        }
+
+    def set_image_remediation_metrics(self, metrics):
+        """Attach pre-generation routing evidence."""
+        if not isinstance(metrics, dict):
+            return
+        self.image_remediation = {
+            key: int(metrics.get(key) or 0)
+            for key in (
+                'reviewed',
+                'flagged',
+                'clean_retained',
+                'unknown_retained',
+                'attachment_reviewed',
+                'attachment_flagged',
+                'attachment_deleted',
+                'generated_main',
+                'generated_variant',
+                'failed_main',
+                'failed_variant',
+                'generation_url_checked',
+                'generation_url_valid',
+                'generation_url_invalid',
+            )
+        }
+
     def to_dict(self):
         return {
             'total_elapsed_s': round(time.time() - self.t_start, 1),
@@ -217,9 +288,16 @@ class PipelineMetrics:
             'http_attempts': self.http_attempts,
             'http_errors': self.http_errors,
             'http_retries': self.http_retries,
+            'rate_wait_s': round(self.rate_wait_s, 3),
             'http_status': self.http_status,
             'circuit_open': self.circuit_open,
+            'fallback_attempts': self.fallback_attempts,
+            'fallback_successes': self.fallback_successes,
+            'fallback_failures': self.fallback_failures,
+            'fallback_routes': self.fallback_routes,
             'cache': self.cache,
             'concurrency': self.concurrency,
             'quality': self.quality,
+            'image_quality_gate': self.image_quality_gate,
+            'image_remediation': self.image_remediation,
         }

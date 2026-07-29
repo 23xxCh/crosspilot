@@ -30,7 +30,7 @@ jobs:
         run: uv run pytest tests/ -q -m "not network"
 
       - name: Build with PyInstaller
-        run: uv run pyinstaller --onefile --name CrossPilot --add-data "web/static:web/static" --add-data "web/runner.py:web" --add-data "scripts:scripts" --add-data "keys.example.json:." main_cli.py
+        run: uv run pyinstaller --clean --noconfirm CrossPilot.spec
 
       - name: Sign executable
         shell: pwsh

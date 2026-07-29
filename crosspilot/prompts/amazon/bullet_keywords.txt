@@ -1,0 +1,17 @@
+Based on this product title and description, generate:
+
+1. BULLET POINTS (exactly 5):
+   - Each under 200 chars, English
+   - Cover: material, dimensions, features, compatibility, package contents
+   - Natural language for Amazon buyers
+   - NO brand names allowed
+
+2. SEARCH KEYWORDS (exactly 10):
+   - 10 relevant search terms, comma-separated
+   - NO brand names
+
+Return EXACTLY: {{"bullets": ["point1","point2","point3","point4","point5"], "keywords": "kw1,kw2,...,kw10"}}
+No markdown code fences. No extra text.
+
+Title: {title}
+Description: {description}

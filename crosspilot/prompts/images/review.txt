@@ -1,0 +1,9 @@
+Inspect this e-commerce product image. Answer YES if the image needs remediation for any of these reasons:
+1. SELLER WATERMARK: It contains a seller watermark, store ID, seller name, seller URL, or other seller-owned overlaid text.
+2. BRAND NAME/LOGO: Any brand text or logo is visible anywhere, including packaging, labels, product surfaces, or the background.
+3. PERSON: It contains ANY person or human presence, including a model, face, head, hand, arm, leg, foot, body, silhouette, reflection, mannequin, background person, or person depicted in printed graphics.
+4. NON-PRODUCT TEXT: It contains readable text that is not a product specification, dimension, technical label, or text physically printed as part of the product design.
+
+Generic decorative words such as "Sports", "Limited Edition", or "Turbo" are normally product design elements; do not flag them unless they are clearly a registered trademark.
+
+Answer NO only when there is no human presence and no seller watermark, overlaid brand mark, logo, or other removable overlay. Answer YES or NO only.

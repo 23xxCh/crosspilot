@@ -2,6 +2,8 @@
 import os, sys, json, time, pytest
 import base64
 import importlib
+import shutil
+import subprocess
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
@@ -13,9 +15,25 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def reset_store(monkeypatch):
+def reset_store(monkeypatch, tmp_path):
     """每个测试隔离后台队列，并清理临时 SQLite 数据。"""
     from web import jobs
+    env_path = tmp_path / '.env'
+    env_path.write_text('', encoding='utf-8')
+    monkeypatch.setenv('CROSSPILOT_ENV', str(env_path))
+    monkeypatch.setenv(
+        'CROSSPILOT_PROMPT_DIR',
+        str(tmp_path / 'prompts'),
+    )
+    monkeypatch.setenv(
+        'CROSSPILOT_PROMPT_HISTORY_DIR',
+        str(tmp_path / 'prompt_history'),
+    )
+    monkeypatch.delenv('CROSSPILOT_PROMPT_PROFILE', raising=False)
+    from crosspilot.config import reload_config
+    reload_config()
+    from crosspilot.prompt_registry import reload_prompt_registry
+    reload_prompt_registry()
     monkeypatch.setattr(jobs, 'enqueue', lambda *_args, **_kwargs: True)
     yield
     try:
@@ -499,6 +517,141 @@ class TestWebAPI:
         assert resp.status_code == 400
         assert '不支持' in resp.json()['detail']
 
+    def test_settings_persist_exact_models_to_effective_env(self):
+        resp = client.post('/api/settings', json={
+            'deepseek_text_model': 'deepseek-next',
+            'agnes_image_model': 'agnes-image-next',
+            'agnes_image_fallback_model': 'agnes-image-stable',
+        })
+
+        assert resp.status_code == 200
+        settings = client.get('/api/settings').json()
+        assert settings['deepseek_text_model'] == 'deepseek-next'
+        assert settings['agnes_image_model'] == 'agnes-image-next'
+        assert (
+            settings['agnes_image_fallback_model']
+            == 'agnes-image-stable'
+        )
+
+        from crosspilot.config import get_env_path
+        saved = get_env_path().read_text(encoding='utf-8')
+        assert 'DEEPSEEK_TEXT_MODEL=deepseek-next' in saved
+        assert 'AGNES_IMAGE_MODEL=agnes-image-next' in saved
+
+    def test_settings_reject_model_id_with_newline(self):
+        resp = client.post('/api/settings', json={
+            'agnes_image_model': 'valid\nAGNES_KEY=bad',
+        })
+
+        assert resp.status_code == 400
+
+    def test_settings_persist_agnes_fast_congestion_policy(self):
+        resp = client.post('/api/settings', json={
+            'agnes_503_retry_limit': 1,
+            'agnes_503_backoff_min_s': 2,
+            'agnes_503_backoff_max_s': 6,
+            'agnes_503_circuit_threshold': 2,
+            'agnes_503_circuit_cooldown_s': 90,
+        })
+
+        assert resp.status_code == 200
+        settings = resp.json()['settings']
+        assert settings['agnes_503_retry_limit'] == '1'
+        assert settings['agnes_503_backoff_max_s'] == '6'
+        assert settings['agnes_503_circuit_cooldown_s'] == '90'
+
+    def test_settings_reject_invalid_agnes_congestion_range(self):
+        resp = client.post('/api/settings', json={
+            'agnes_503_backoff_min_s': 9,
+            'agnes_503_backoff_max_s': 3,
+        })
+
+        assert resp.status_code == 400
+        assert '等待区间' in resp.json()['detail']
+
+    def test_settings_switch_profile_clears_exact_model_overrides(self):
+        customized = client.post('/api/settings', json={
+            'deepseek_text_model': 'temporary-custom-model',
+        })
+        assert customized.status_code == 200
+        assert (
+            client.get('/api/settings').json()['deepseek_text_model']
+            == 'temporary-custom-model'
+        )
+
+        switched = client.post('/api/settings', json={
+            'model_profile': 'test',
+        })
+
+        assert switched.status_code == 200
+        settings = switched.json()['settings']
+        assert settings['model_profile'] == 'test'
+        assert settings['deepseek_text_model'] == 'deepseek-v4-flash'
+        assert {'production', 'test'} <= set(settings['model_profiles'])
+
+    def test_prompt_api_edits_versions_and_rolls_back(self):
+        prompt_id = 'amazon.title_optimize'
+        detail = client.get(f'/api/prompts/{prompt_id}')
+        assert detail.status_code == 200
+        original = detail.json()['content']
+        assert detail.json()['source'] == 'default'
+
+        first = client.post(
+            f'/api/prompts/{prompt_id}',
+            json={'content': original + '\nFirst edit'},
+        )
+        assert first.status_code == 200
+        second = client.post(
+            f'/api/prompts/{prompt_id}',
+            json={'content': original + '\nSecond edit'},
+        )
+        assert second.status_code == 200
+
+        history = client.get(
+            f'/api/prompts/{prompt_id}/history'
+        ).json()['revisions']
+        assert history
+        rolled_back = client.post(
+            f'/api/prompts/{prompt_id}/rollback',
+            json={'revision_id': history[0]['revision_id']},
+        )
+
+        assert rolled_back.status_code == 200
+        assert (
+            client.get(f'/api/prompts/{prompt_id}').json()['content']
+            == original + '\nFirst edit'
+        )
+
+    def test_prompt_profiles_are_isolated_and_can_reset(self):
+        prompt_id = 'amazon.title_optimize'
+        original = client.get(f'/api/prompts/{prompt_id}').json()['content']
+        saved = client.post(
+            f'/api/prompts/{prompt_id}',
+            json={'content': original + '\nProduction only'},
+        )
+        assert saved.status_code == 200
+
+        switched = client.post('/api/settings', json={
+            'prompt_profile': 'test',
+        })
+        assert switched.status_code == 200
+        test_detail = client.get(f'/api/prompts/{prompt_id}').json()
+        assert test_detail['profile'] == 'test'
+        assert test_detail['content'] == original
+
+        reset = client.delete(f'/api/prompts/{prompt_id}/override')
+        assert reset.status_code == 200
+
+    def test_prompt_api_rejects_contract_breaking_edit(self):
+        prompt_id = 'amazon.title_optimize'
+        resp = client.post(
+            f'/api/prompts/{prompt_id}',
+            json={'content': 'No required template variables'},
+        )
+
+        assert resp.status_code == 400
+        assert '模板变量' in resp.json()['detail']
+
     def test_store_mark_done_persists_stats(self, tmp_path):
         from web import store
         store.create('stats-job', 'stats.xlsx', str(tmp_path / 'stats.xlsx'))
@@ -965,10 +1118,36 @@ class TestUploadFlow:
 
 def test_static_frontend_has_no_inline_script_handlers():
     root = os.path.join(os.path.dirname(__file__), '..', 'web', 'static')
+    javascript = [
+        name for name in os.listdir(root)
+        if name.endswith('.js')
+    ]
     source = '\n'.join(
         open(os.path.join(root, name), encoding='utf-8').read()
-        for name in ('index.html', 'app.js')
+        for name in ('index.html', *javascript)
     )
     assert 'onclick=' not in source
     assert 'onchange=' not in source
     assert 'fonts.googleapis.com' not in source
+    assert 'window._' not in source
+
+
+def test_static_frontend_module_graph_links():
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node.js is not installed')
+    root = os.path.join(os.path.dirname(__file__), '..')
+    result = subprocess.run(
+        [
+            node,
+            '--no-warnings',
+            '--experimental-vm-modules',
+            os.path.join(root, 'tools', 'check_frontend_modules.mjs'),
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

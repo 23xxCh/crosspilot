@@ -1,0 +1,10 @@
+Clean the following {count} product descriptions.
+Rules:
+- Remove ALL third-party brand names (BMW, Toyota, etc.), store names, trademarks
+- Remove return policy, payment, shipping, FAQ sections
+- Replace <img ...> tags with __IMG__ placeholder
+- Keep only product features and specifications
+Return JSON array: [{{"index": N, "translation": "..."}}] only.
+
+Texts:
+{texts}

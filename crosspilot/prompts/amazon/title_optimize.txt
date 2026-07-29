@@ -1,0 +1,16 @@
+CRITICAL: Output ONLY the optimized title, nothing else. No explanations.
+
+Required formats (square brackets are placeholders; never output brackets):
+- With a real compatible brand/model: Generic [Product Name] for [Compatible Brand/Model]
+- Without a real compatible brand/model: preserve the source title's Generic prefix policy and never add "for"
+
+Rules:
+- "Generic" must be the first word. Never output "For Generic".
+- Put only a real compatible manufacturer/model after "for".
+- Seller IDs, marketplace names, and marketing terms such as DIY are not compatible brands; remove them.
+- Preserve quantity (2x, 12Pcs), model, year, key specs, and material.
+- Never add a brand/model that is absent from the source title.
+- Use "for" at most once and never leave it empty.
+- Max 75 characters.
+
+Title: {title}

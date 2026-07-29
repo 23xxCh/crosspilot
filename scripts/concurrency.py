@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Iterable
 
@@ -21,15 +22,45 @@ def env_int(name: str, default: int, minimum: int = 1, maximum: int | None = Non
 def configured_concurrency(kind: str, default: int, minimum: int = 1, maximum: int | None = None) -> int:
     """Resolve CROSSPILOT_<KIND>_CONCURRENCY with safe bounds."""
     key = f'CROSSPILOT_{kind.upper()}_CONCURRENCY'
-    return env_int(key, default, minimum=minimum, maximum=maximum)
+    configured_default = default
+    if key not in os.environ:
+        try:
+            from crosspilot.config import load_config
+
+            configured_default = int(
+                load_config().get(
+                    f'{kind.upper()}_CONCURRENCY',
+                    str(default),
+                )
+            )
+        except (ImportError, TypeError, ValueError):
+            configured_default = default
+    return env_int(
+        key,
+        configured_default,
+        minimum=minimum,
+        maximum=maximum,
+    )
 
 
-def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+def env_float(name: str, default: float, minimum: float, maximum: float) -> float:
     try:
         value = float(os.environ.get(name, str(default)))
     except (TypeError, ValueError):
         value = default
     return max(minimum, min(maximum, value))
+
+
+def configured_rpm(
+    kind: str,
+    default: float,
+    minimum: float = 1.0,
+    maximum: float | None = None,
+) -> float:
+    """Resolve CROSSPILOT_<KIND>_RPM with safe bounds."""
+    key = f'CROSSPILOT_{kind.upper()}_RPM'
+    max_bound = maximum if maximum is not None else 1_000_000.0
+    return env_float(key, default, minimum=minimum, maximum=max_bound)
 
 
 def adaptive_map(
@@ -43,6 +74,9 @@ def adaptive_map(
     is_success: Callable[[Any], bool] | None = None,
     on_result: Callable[[Any, Any], None] | None = None,
     terminal_exceptions: tuple[type[BaseException], ...] = (),
+    backoff_s: float = 0.0,
+    max_backoff_s: float | None = None,
+    sleep_fn: Callable[[float], None] | None = None,
 ) -> tuple[list[tuple[Any, Any]], dict[str, Any]]:
     """Run work in batches and reduce concurrency when a batch fails too often."""
     pending = list(items)
@@ -56,6 +90,7 @@ def adaptive_map(
             'reductions': 0,
             'recoveries': 0,
             'failures': 0,
+            'backoff_total_s': 0.0,
             'events': [],
         }
 
@@ -63,7 +98,7 @@ def adaptive_map(
     effective_min = max(1, min(min_workers, maximum, len(pending)))
     workers = max(effective_min, min(initial_workers, maximum, len(pending)))
     initial = workers
-    failure_threshold = _env_float(
+    failure_threshold = env_float(
         'CROSSPILOT_ADAPTIVE_FAILURE_RATE',
         0.25,
         minimum=0.05,
@@ -81,9 +116,16 @@ def adaptive_map(
     total_failures = 0
     reductions = 0
     recoveries = 0
+    backoff_total_s = 0.0
     clean_batches = 0
     batch_index = 0
     cursor = 0
+    sleeper = sleep_fn or time.sleep
+    backoff_s = max(0.0, float(backoff_s or 0.0))
+    max_backoff = (
+        max(backoff_s, float(max_backoff_s))
+        if max_backoff_s is not None else backoff_s
+    )
 
     while cursor < len(pending):
         batch_index += 1
@@ -114,15 +156,22 @@ def adaptive_map(
         if batch_failures and failure_rate >= failure_threshold and workers > min_workers:
             next_workers = max(min_workers, workers // 2)
             if next_workers < workers:
+                wait_s = 0.0
+                if backoff_s > 0 and cursor < len(pending):
+                    wait_s = min(max_backoff, backoff_s * (2 ** reductions))
                 events.append({
                     'batch': batch_index,
                     'from': workers,
                     'to': next_workers,
                     'reason': 'failure_rate',
                     'failure_rate': round(failure_rate, 3),
+                    'backoff_s': round(wait_s, 3),
                 })
                 workers = next_workers
                 reductions += 1
+                if wait_s > 0:
+                    sleeper(wait_s)
+                    backoff_total_s += wait_s
             clean_batches = 0
         elif batch_failures == 0:
             clean_batches += 1
@@ -150,5 +199,6 @@ def adaptive_map(
         'reductions': reductions,
         'recoveries': recoveries,
         'failures': total_failures,
+        'backoff_total_s': round(backoff_total_s, 3),
         'events': events,
     }

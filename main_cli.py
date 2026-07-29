@@ -86,7 +86,10 @@ def main():
         except Exception:  # 浏览器打开失败，用户手动打开
             print(f"Browser open failed. Open http://localhost:{port} manually.")
 
-    threading.Thread(target=_open, daemon=True).start()
+    if os.environ.get('CROSSPILOT_NO_BROWSER', '').strip().lower() not in {
+        '1', 'true', 'yes', 'on',
+    }:
+        threading.Thread(target=_open, daemon=True).start()
 
     import uvicorn
     for attempt in range(3):

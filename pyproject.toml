@@ -5,6 +5,7 @@ description = "跨境电商 Listing 全自动清洗平台"
 requires-python = ">=3.11"
 dependencies = [
     "openpyxl>=3.1",
+    "pillow>=10.0",
     "requests>=2.31",
     "fastapi>=0.109",
     "uvicorn[standard]>=0.27",

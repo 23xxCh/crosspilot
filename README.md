@@ -12,7 +12,7 @@ eBay/Amazon → TikTok Shop / Amazon 回填表 全自动清洗。
 # 安装
 pip install uv && uv sync
 
-# 按 keys.example.json 创建 keys.json，配置 provider 和 key
+# 复制 .env.example 为 .env，填入 API Key
 
 # 启动 Web 平台
 uv run uvicorn web.app:app --port 8765
@@ -23,24 +23,24 @@ uv run python scripts/process_amazon.py "亚马逊表/采集表.xlsx"  # Amazon�
 uv run python scripts/process_amazon.py "亚马逊表/采集表.json"  # Amazon JSON→回填 JSON
 ```
 
-## 配置模型提供商
+## 配置模型与 Prompt
 
-在 `keys.json` 中配置：
+敏感配置统一放在 `.env`：
 
-```json
-{
-  "text_provider": "deepseek",
-  "vision_provider": "agnes",
-  "image_gen_provider": "agnes",
-  "deepseek_key": "sk-...",
-  "agnes_key": "cpk-..."
-}
+```dotenv
+DEEPSEEK_KEY=sk-...
+AGNES_KEY=cpk-...
+MODEL_PROFILE=production
 ```
 
-**换模型只需改配置，代码完全不用动！**
+模型、端点和回退链统一定义在
+[`crosspilot/model_profiles.json`](crosspilot/model_profiles.json)。Web 设置页可修改
+当前 Provider 和精确模型 ID，保存后会热重载。业务 Prompt 统一位于
+[`crosspilot/prompts/`](crosspilot/prompts/)；修改 Prompt 或模型后，相关缓存签名会
+自动变化，不会继续使用旧结果。
 
-部署环境也可使用 `CROSSPILOT_DEEPSEEK_KEY` 与
-`CROSSPILOT_AGNES_KEY`；环境变量优先于 `keys.json`。
+配置优先级为：`CROSSPILOT_*` 系统环境变量 > `.env` > 旧
+`keys.json` > 配置档默认值。`keys.json` 仅保留只读兼容。
 
 ### 支持的提供商
 
@@ -48,22 +48,29 @@ uv run python scripts/process_amazon.py "亚马逊表/采集表.json"  # Amazon 
 |--------|--------------|-----------------|-------------------|
 | DeepSeek | ✅ | ❌ | ❌ |
 | Agnes | ✅ | ✅ | ✅ |
+| GPT Image | ❌ | ❌ | ✅ |
 
 ## 架构
 
 ```
 scripts/
-├── model_provider.py        # 统一模型提供商接口（配置驱动）
+├── model_provider.py        # 旧导入兼容门面
+├── providers/               # 独立客户端、路由、工厂和结构化错误
 ├── dmx_client.py            # 兼容层（包装 model_provider）
 ├── process_ebay_tk.py       # eBay 管道入口
-├── process_amazon.py        # Amazon 管道
-├── pipelines/               # eBay 阶段编排
+├── process_amazon.py        # Amazon 编排入口与兼容 API
+├── pipelines/               # eBay/Amazon 阶段实现
 ├── services/                # 抽象层
-├── adapters/                # 表格格式适配器
-└── image_gen.py             # 独立图生图脚本
+└── adapters/                # 表格格式适配器
 
 web/                       FastAPI + vanilla JS SPA
 tests/                     单元、回归与 Web API 测试
+
+crosspilot/
+├── model_profiles.json    # 模型、端点和回退链
+├── model_registry.py      # 模型配置校验与解析
+├── prompt_registry.py     # Prompt 加载、渲染与签名
+└── prompts/               # 可版本控制的业务 Prompt
 ```
 
 ## 管道阶段
@@ -84,21 +91,18 @@ tests/                     单元、回归与 Web API 测试
 
 | 文件 | 说明 |
 |------|------|
-| `keys.json` | DeepSeek / Agnes key（.gitignore 保护） |
-| `keys.example.json` | 参考模板 |
+| `.env` | API Key、当前配置档和临时模型覆盖（.gitignore 保护） |
+| `.env.example` | 无敏感值的配置模板 |
+| `crosspilot/model_profiles.json` | 模型、端点、参数和回退链 |
+| `crosspilot/prompts/` | Amazon/eBay/图片业务 Prompt |
+| `keys.json` | 旧版本配置，只读兼容 |
 | `data/` | 上传、缓存、日志 |
 | `.gitignore` | 排除敏感文件和运行时产物 |
 
 ### API 密钥配置
 
-在 `keys.json` 中配置：
-
-```json
-{
-  "deepseek_key": "sk-你的DeepSeek密钥",
-  "agnes_key": "cpk-你的Agnes密钥"
-}
-```
+复制 `.env.example` 为 `.env` 后填写 `DEEPSEEK_KEY` 和
+`AGNES_KEY`，或直接在 Web 设置页保存。
 
 - **DeepSeek**: 用于文本翻译、描述清洗、Bullet/关键词生成
 - **Agnes**: 用于图审（检测水印/人物）和图生图（去水印/去人物）
@@ -140,10 +144,7 @@ GitHub Actions 配置 `CROSSPILOT_DEEPSEEK_KEY` 和 `CROSSPILOT_AGNES_KEY`。
 ## 打包
 
 ```bash
-uv run pyinstaller --onefile --name CrossPilot \
-  --add-data "web/static:web/static" \
-  --add-data "scripts:scripts" \
-  --add-data "keys.example.json:." main_cli.py
+uv run pyinstaller --clean --noconfirm CrossPilot.spec
 ```
 
 版本只在 `crosspilot/version.py` 中维护。推送 `v*` 标签前可运行：

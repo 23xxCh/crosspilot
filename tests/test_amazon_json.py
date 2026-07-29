@@ -83,6 +83,35 @@ def test_build_output_payload_matches_refill_template_shape():
     assert payload['关键词信息'] == ['keyword one, keyword two']
 
 
+def test_build_output_payload_preserves_duplicate_variant_positions():
+    row = _processed_rows()[0]
+    row['var_imgs'] = [
+        'https://generated/variant.jpg',
+        'https://generated/variant.jpg',
+    ]
+
+    payload = build_output_payload([row])
+
+    assert payload['变种图片链接'] == [[
+        'https://generated/variant.jpg',
+        'https://generated/variant.jpg',
+    ]]
+
+
+def test_build_output_payload_includes_missing_description_problem_id():
+    row = _processed_rows()[0]
+    row['desc'] = ''
+    row['_quality_issues'] = [{
+        'code': 'missing_source_description',
+        'message': '源产品描述为空，已保留空值并标记人工复核',
+    }]
+
+    payload = build_output_payload([row])
+
+    assert payload['产品描述'] == ['']
+    assert payload['有问题的产品id'] == ['item-1']
+
+
 def test_stage_write_output_uses_json_for_json_input(tmp_path):
     import scripts.process_amazon as process_amazon
 
@@ -152,3 +181,26 @@ def test_load_rejects_invalid_image_url(tmp_path):
 
     with pytest.raises(ValueError, match='无效图片 URL'):
         load_columnar_json(str(path))
+
+
+def test_stage_read_json_applies_requested_row_limit(tmp_path, monkeypatch):
+    """CLI --max-rows must slice valid input instead of rejecting the full file."""
+    import scripts.process_amazon as process_amazon
+
+    payload = {
+        '商品id': [f'item-{index}' for index in range(3)],
+        '产品标题': [f'Title {index}' for index in range(3)],
+        '产品描述': [f'Description {index}' for index in range(3)],
+        '产品图片链接': [
+            [f'https://img.example/{index}.jpg']
+            for index in range(3)
+        ],
+        '变种图片链接': [[] for _ in range(3)],
+    }
+    path = tmp_path / '商品采集表.json'
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+    monkeypatch.setenv('CROSSPILOT_MAX_ROWS', '2')
+
+    rows = process_amazon._stage_read_json(None, str(path))
+
+    assert [row['id'] for row in rows] == ['item-0', 'item-1']

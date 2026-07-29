@@ -9,6 +9,8 @@ import time
 import tempfile
 import threading
 
+from crosspilot.prompt_registry import get_prompt_registry
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline_log import log as _log, new_request_id, PipelineMetrics
 from model_provider import (
@@ -206,16 +208,8 @@ def rule_strip_brands(t: str | None) -> str | None:
 
 
 # === Text cleaning & translation ===
-DESC_PROMPT = ("Clean the following HTML product description. Requirements:\n"
-    "1) Remove ALL third-party brand names and store names (car brands like BMW/Toyota/Honda/Mercedes/Porsche/Audi, "
-    "platform names like Shopee/Lazada, any other brand/trademark names — English and Chinese both).\n"
-    "2) Remove ALL content unrelated to the product itself: return policy, payment methods, shipping info, FAQ, "
-    "store introduction, follow-store prompts, contact info, promotional campaigns, QR codes, any policy boilerplate text.\n"
-    "3) Keep ONLY product information: product name, features, material, dimensions, specifications, color, quantity, "
-    "use cases, applicable scenarios/models, installation instructions.\n"
-    "4) Replace every <img ...> tag with a placeholder __IMG__ (so image positions are preserved).\n"
-    "5) Output clean HTML with __IMG__ placeholders and <p>/<ul>/<li>/<br> text. No explanation, no prefix/suffix.\n\n"
-    "Description: {}")
+_prompts = get_prompt_registry()
+DESC_PROMPT = _prompts.get("ebay.description_clean")
 
 _CHINESE_RE = re.compile(r'[一-鿿]')
 
@@ -229,7 +223,10 @@ def clean_text_ai(text, prompt):
     text = str(text)
     try:
         provider = get_provider()
-        content = provider.call_text(prompt.format(text), max_tokens=2048)
+        content = provider.call_text(
+            _translate_svc.render_text_prompt(prompt, text),
+            max_tokens=2048,
+        )
         if content is not None:
             content = _strip_code_fence(content)
             if content: return rule_strip_brands(content)
@@ -240,23 +237,8 @@ def clean_text_ai(text, prompt):
     return rule_strip_brands(text)
 
 
-TRANSLATE_PROMPT = ("Translate the following product text to Vietnamese.\n"
-    "Rules:\n"
-    "- Preserve ALL product information: material, dimensions, specifications, color, quantity, type, model numbers, "
-    "product names, technical specs — keep numbers/units/model codes UNCHANGED.\n"
-    "- Keep the original formatting, HTML tags (p, ul, li, br, img) and punctuation intact.\n"
-    "- IMPORTANT: Keep the placeholder __IMG__ EXACTLY as-is (do not translate or remove it).\n"
-    "- If already in Vietnamese, return unchanged.\n"
-    "Output Vietnamese translation directly, no explanation or prefix/suffix.\n\n"
-    "Text: {}")
-
-TITLE_TRANSLATE_PROMPT = ("Translate the following product title to Vietnamese.\n"
-    "Rules:\n"
-    "- KEEP product model numbers, brand-compatible vehicle names/years, part numbers, and technical codes in original form (do not translate proper nouns/specs).\n"
-    "- Translate descriptive words, connectors, prepositions, and general terms to Vietnamese naturally.\n"
-    "- Do NOT add, remove, or rewrite any original product meaning.\n"
-    "Output only the translated title, no explanation or quotes.\n\n"
-    "Title: {}")
+TRANSLATE_PROMPT = _prompts.get("translation.text")
+TITLE_TRANSLATE_PROMPT = _prompts.get("translation.title")
 
 
 def _select_prompt(text, default_prompt):

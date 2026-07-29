@@ -5,67 +5,27 @@
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from crosspilot.prompt_registry import get_prompt_registry
 from pipeline_log import log as _log
 from model_provider import ProviderQuotaError, get_provider
 
 _CHINESE_RE = re.compile(r'[一-鿿]')
 _BATCH_SIZE = 25
 
-TRANSLATE_BATCH_PROMPT = (
-    "Translate the following {count} texts to Vietnamese.\n"
-    "Rules:\n"
-    "- Preserve ALL product info: material, dimensions, specs, color, quantity, model numbers\n"
-    "- Keep HTML tags (p, ul, li, br, img) and punctuation intact\n"
-    "- Keep __IMG__ placeholder unchanged\n"
-    "- If already Vietnamese, return unchanged\n"
-    "Return JSON array: [{{\"index\": N, \"translation\": \"...\"}}] only. No other text.\n\n"
-    "Texts:\n{texts}"
-)
+_prompts = get_prompt_registry()
+TRANSLATE_BATCH_PROMPT = _prompts.get("translation.batch")
+TRANSLATE_BATCH_PROMPT_CN = _prompts.get("translation.batch_chinese")
+CLEAN_BATCH_PROMPT = _prompts.get("translation.clean_batch")
+TITLE_TRANSLATE_PROMPT = _prompts.get("translation.title")
+TRANSLATE_PROMPT = _prompts.get("translation.text")
 
-TRANSLATE_BATCH_PROMPT_CN = (
-    "Translate the following {count} Chinese texts to Vietnamese.\n"
-    "CRITICAL: Convert ALL Chinese (中文) characters to Vietnamese. No Chinese characters may remain in any output.\n"
-    "Rules:\n"
-    "- Preserve ONLY proper nouns: brand names, model numbers, part numbers (e.g. LED, ABS, BMW, Honda)\n"
-    "- Preserve product info: material, dimensions, specs, color, quantity, model numbers\n"
-    "- Keep HTML tags (p, ul, li, br, img) and punctuation intact\n"
-    "- Keep __IMG__ placeholder unchanged\n"
-    "Return JSON array: [{{\"index\": N, \"translation\": \"...\"}}] only.\n\n"
-    "Texts:\n{texts}"
-)
 
-CLEAN_BATCH_PROMPT = (
-    "Clean the following {count} product descriptions.\n"
-    "Rules:\n"
-    "- Remove ALL third-party brand names (BMW, Toyota, etc.), store names, trademarks\n"
-    "- Remove return policy, payment, shipping, FAQ sections\n"
-    "- Replace <img ...> tags with __IMG__ placeholder\n"
-    "- Keep only product features and specifications\n"
-    "Return JSON array: [{{\"index\": N, \"translation\": \"...\"}}] only.\n\n"
-    "Texts:\n{texts}"
-)
-
-TITLE_TRANSLATE_PROMPT = (
-    "Translate the following product title to Vietnamese.\n"
-    "Rules:\n"
-    "- KEEP product model numbers, brand-compatible vehicle names/years, part numbers, and technical codes in original form (do not translate proper nouns/specs).\n"
-    "- Translate descriptive words, connectors, prepositions, and general terms to Vietnamese naturally.\n"
-    "- Do NOT add, remove, or rewrite any original product meaning.\n"
-    "Output only the translated title, no explanation or quotes.\n\n"
-    "Title: {}"
-)
-
-TRANSLATE_PROMPT = (
-    "Translate the following product text to Vietnamese.\n"
-    "Rules:\n"
-    "- Preserve ALL product information: material, dimensions, specifications, color, quantity, type, "
-    "model numbers, product names, technical specs — keep numbers/units/model codes UNCHANGED.\n"
-    "- Keep the original formatting, HTML tags (p, ul, li, br, img) and punctuation intact.\n"
-    "- IMPORTANT: Keep the placeholder __IMG__ EXACTLY as-is (do not translate or remove it).\n"
-    "- If already in Vietnamese, return unchanged.\n"
-    "Output Vietnamese translation directly, no explanation or prefix/suffix.\n\n"
-    "Text: {}"
-)
+def render_text_prompt(prompt: str, text: str) -> str:
+    """Render new named templates while accepting legacy positional templates."""
+    try:
+        return prompt.format(text=text)
+    except (IndexError, KeyError):
+        return prompt.format(text)
 
 
 class TranslationService:
@@ -113,14 +73,7 @@ class TranslationService:
         """Chinese detection → use aggressive Chinese→Vietnamese prompt."""
         if not _CHINESE_RE.search(text):
             return default_prompt
-        return (
-            "Translate the following Chinese product text to Vietnamese.\n"
-            "- CRITICAL: Convert ALL Chinese (中文) characters to Vietnamese. No Chinese characters may remain.\n"
-            "- Preserve ONLY proper nouns: brand names, model numbers, part numbers (e.g. LED, ABS, BMW, Honda).\n"
-            "- Translate ALL other words to Vietnamese naturally.\n"
-            "Output Vietnamese translation directly, no explanation or quotes.\n\n"
-            "Text: {}"
-        )
+        return _prompts.get("translation.chinese_text")
 
     def translate_text(self, text, prompt):
         """Translate single text to Vietnamese using model_provider."""
@@ -131,7 +84,10 @@ class TranslationService:
         actual_prompt = self._select_prompt(text, prompt)
 
         try:
-            content = self._provider.call_text(actual_prompt.format(text), max_tokens=2048)
+            content = self._provider.call_text(
+                render_text_prompt(actual_prompt, text),
+                max_tokens=2048,
+            )
             if content:
                 result = self._strip_code_fence(content)
                 if has_chinese and _CHINESE_RE.search(result):
@@ -209,8 +165,11 @@ class TranslationService:
             futures = {}
             for b in batches:
                 pt = prompt_template
-                if prompt_template is TRANSLATE_BATCH_PROMPT and any(_CHINESE_RE.search(t) for t in b):
-                    pt = TRANSLATE_BATCH_PROMPT_CN
+                if (
+                    'translate' in label
+                    and any(_CHINESE_RE.search(t) for t in b)
+                ):
+                    pt = _prompts.get("translation.batch_chinese")
                 futures[pool.submit(self._process_batch, b, pt, label)] = b
             for future in as_completed(futures):
                 results.update(future.result())
@@ -218,8 +177,16 @@ class TranslationService:
 
     def batch_translate(self, texts):
         """Batch translate texts to Vietnamese."""
-        return self.batch_process(texts, TRANSLATE_BATCH_PROMPT, "batch_translate")
+        return self.batch_process(
+            texts,
+            _prompts.get("translation.batch"),
+            "batch_translate",
+        )
 
     def batch_clean(self, texts):
         """Batch clean product descriptions."""
-        return self.batch_process(texts, CLEAN_BATCH_PROMPT, "batch_clean")
+        return self.batch_process(
+            texts,
+            _prompts.get("translation.clean_batch"),
+            "batch_clean",
+        )

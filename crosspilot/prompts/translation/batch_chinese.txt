@@ -1,0 +1,11 @@
+Translate the following {count} Chinese texts to Vietnamese.
+CRITICAL: Convert ALL Chinese (中文) characters to Vietnamese. No Chinese characters may remain in any output.
+Rules:
+- Preserve ONLY proper nouns: brand names, model numbers, part numbers (e.g. LED, ABS, BMW, Honda)
+- Preserve product info: material, dimensions, specs, color, quantity, model numbers
+- Keep HTML tags (p, ul, li, br, img) and punctuation intact
+- Keep __IMG__ placeholder unchanged
+Return JSON array: [{{"index": N, "translation": "..."}}] only.
+
+Texts:
+{texts}

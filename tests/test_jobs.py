@@ -35,6 +35,21 @@ def test_pipeline_metrics_includes_cache_and_provider_attempts():
         'http_retries': 2,
         'http_status': {'429': 1, '503': 1, '200': 2},
         'circuit_open': 1,
+        'fallback_attempts': 2,
+        'fallback_successes': 1,
+        'fallback_failures': 1,
+        'fallback_routes': {
+            'agnes:agnes-image-2.0-flash': {
+                'attempts': 1,
+                'successes': 0,
+                'failures': 1,
+            },
+            'gptimage:gpt-image-2': {
+                'attempts': 1,
+                'successes': 1,
+                'failures': 0,
+            },
+        },
         'by_operation': {},
     })
     metrics.set_cache_metrics({
@@ -47,6 +62,13 @@ def test_pipeline_metrics_includes_cache_and_provider_attempts():
     assert payload['http_attempts'] == 4
     assert payload['http_retries'] == 2
     assert payload['circuit_open'] == 1
+    assert payload['fallback_attempts'] == 2
+    assert payload['fallback_successes'] == 1
+    assert payload['fallback_failures'] == 1
+    assert (
+        payload['fallback_routes']['gptimage:gpt-image-2']['successes']
+        == 1
+    )
     assert payload['cache']['hits'] == 4
     assert payload['cache']['misses'] == 2
     assert payload['cache']['hit_rate'] == 0.667
@@ -77,6 +99,32 @@ def test_pipeline_metrics_includes_concurrency_backoff():
 
     assert payload['concurrency']['reductions'] == 2
     assert payload['concurrency']['by_operation']['review']['final_workers'] == 25
+
+
+def test_pipeline_metrics_includes_image_routing_and_gate():
+    metrics = PipelineMetrics()
+    metrics.set_image_remediation_metrics({
+        'reviewed': 10,
+        'flagged': 3,
+        'clean_retained': 6,
+        'unknown_retained': 1,
+    })
+    metrics.set_image_quality_gate_metrics({
+        'checked': 4,
+        'accepted': 2,
+        'rejected': 2,
+        'unavailable': 1,
+        'regenerated': 1,
+        'retained_original': 1,
+        'reasons': {'wrong_item_count': 2},
+    })
+
+    payload = metrics.to_dict()
+
+    assert payload['image_remediation']['flagged'] == 3
+    assert payload['image_remediation']['clean_retained'] == 6
+    assert payload['image_quality_gate']['accept_rate'] == 0.5
+    assert payload['image_quality_gate']['retained_original'] == 1
 
 
 def test_review_report_csv_extracts_issues_and_metrics():
@@ -142,7 +190,7 @@ def test_review_data_includes_pipeline_audit_rows():
                     'method': 'rule',
                     'reason': 'normalize_title',
                     'before': 'BMW Floor Mat',
-                    'after': 'For BMW Floor Mat',
+                    'after': 'Generic Floor Mat for BMW',
                 }],
             },
             'metrics': {

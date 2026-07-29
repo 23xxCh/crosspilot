@@ -9,44 +9,23 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from model_provider import get_provider, reload_provider as _reload_provider
+from crosspilot.model_registry import get_model_registry
+from crosspilot.prompt_registry import get_prompt_registry
 
 # =============================================================================
 # 兼容旧接口
 # =============================================================================
 
-# Agnes 常量（保持兼容）
-AGNES_MODEL = "agnes-image-2.1-flash"
-AGNES_BASE = "https://apihub.agnes-ai.com"
-AGNES_TEXT_MODEL = "agnes-2.0-flash"
+# Agnes 常量（兼容旧导入，值来自统一注册表）
+_models = get_model_registry()
+_prompts = get_prompt_registry()
+AGNES_MODEL = _models.target("image").model
+AGNES_BASE = _models.target("image").base_url
+AGNES_TEXT_MODEL = _models.target("vision").model
 
-# Prompts（保持兼容）
-PERSON_REMOVAL_INSTRUCTION = (
-    "Remove every person and all human presence from the image, including models, "
-    "faces, heads, hands, arms, legs, feet, bodies, silhouettes, reflections, "
-    "mannequins, and people depicted in the background or printed graphics. "
-    "Reconstruct any product area hidden by a person so the product remains complete "
-    "and realistic. Do not add any person, mannequin, or human body part."
-)
-
-AGNES_MAIN_PROMPT = (
-    "Create a 1600x1600 e-commerce main product photo from the reference image. "
-    "Pure white background (#FFFFFF), no shadows, no watermarks, no borders, "
-    "no text, no logos, no brand marks. " + PERSON_REMOVAL_INSTRUCTION + " "
-    "Product occupies approximately 85% of the frame, "
-    "centered, front view clearly visible, do not crop key parts. Even studio lighting, "
-    "realistic product texture and material quality. "
-    "CRITICAL: Strictly preserve the product's exact shape, contours, dimensions, "
-    "hole positions, and external structure. Do NOT modify the product design, "
-    "do not change size proportions, openings, or exterior structure."
-)
-
-AGNES_VARIANT_PROMPT = (
-    "Generate a clean product variant photo from the reference image. "
-    "Remove ALL brand names, logos, watermarks, store IDs, and overlaid text. "
-    + PERSON_REMOVAL_INSTRUCTION + " "
-    "Keep the product itself unchanged in color, shape, texture, and composition. "
-    "No brand marks, no logos, no watermarks."
-)
+PERSON_REMOVAL_INSTRUCTION = _prompts.get("images.person_removal")
+AGNES_MAIN_PROMPT = _prompts.get("images.main_product")
+AGNES_VARIANT_PROMPT = _prompts.get("images.variant")
 
 AGNES_PROMPT = AGNES_MAIN_PROMPT
 

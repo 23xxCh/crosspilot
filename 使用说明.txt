@@ -20,4 +20,6 @@ API key 获取：
 
 注意：
   首次运行会在 C:\Users\<用户名>\AppData\Roaming\CrossPilot 创建数据目录
-  请勿移动或删除该目录下的 keys.json
+  API Key 与模型设置由程序目录下的 .env 管理，也可在「设置」页修改
+  模型默认值与回退链在 crosspilot/model_profiles.json
+  Prompt 模板在 crosspilot/prompts 目录

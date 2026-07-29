@@ -2,6 +2,9 @@
 ~\$*.xlsx
 
 # API keys（真实密钥不入库，参考 keys.example.json）
+.env
+.env.*
+!.env.example
 keys.json
 agnes_key.txt
 
@@ -40,6 +43,7 @@ generated_images/
 dist/
 build/
 *.spec
+!CrossPilot.spec
 
 # Update artifacts
 _update/
@@ -47,3 +51,11 @@ _update/
 !data/sample_small.xlsx
 亚马逊表/
 图片和翻译文件/
+
+# Watcher runtime queues and generated delivery files
+watch/input/
+watch/processing/
+watch/output/
+
+# Local source-data exports
+跨境电商自动化采集表*.json

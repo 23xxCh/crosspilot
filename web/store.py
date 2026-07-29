@@ -46,7 +46,12 @@ def _init_db():
       quality_score_json TEXT,
       error TEXT,
       created_at REAL,
-      updated_at REAL
+      updated_at REAL,
+      contact_name TEXT,        -- 公开提交的客户联系人(管家式 MVP)
+      contact_phone TEXT,       -- 客户微信/手机
+      source_platform TEXT,     -- 来源平台(ebay/amazon)
+      public_notes TEXT,        -- 客户备注
+      is_public INTEGER DEFAULT 0  -- 1=公开提交,管理员手动触发处理
     )""")
     existing = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
     if 'pipeline' not in existing:
@@ -57,6 +62,17 @@ def _init_db():
         conn.execute("ALTER TABLE tasks ADD COLUMN quality_grade TEXT")
     if 'quality_score_json' not in existing:
         conn.execute("ALTER TABLE tasks ADD COLUMN quality_score_json TEXT")
+    # 管家式 MVP 字段(向后迁移,旧库自动补列)
+    if 'contact_name' not in existing:
+        conn.execute("ALTER TABLE tasks ADD COLUMN contact_name TEXT")
+    if 'contact_phone' not in existing:
+        conn.execute("ALTER TABLE tasks ADD COLUMN contact_phone TEXT")
+    if 'source_platform' not in existing:
+        conn.execute("ALTER TABLE tasks ADD COLUMN source_platform TEXT")
+    if 'public_notes' not in existing:
+        conn.execute("ALTER TABLE tasks ADD COLUMN public_notes TEXT")
+    if 'is_public' not in existing:
+        conn.execute("ALTER TABLE tasks ADD COLUMN is_public INTEGER DEFAULT 0")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tasks_quality_score ON tasks(quality_score_value, created_at DESC)"
     )
@@ -78,6 +94,10 @@ def _init_db():
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tasks_quality_grade ON tasks(quality_grade, created_at DESC)"
+    )
+    # 管家式 MVP:按公开提交 + 创建时间倒序拉管理员队列
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_public ON tasks(is_public, created_at DESC)"
     )
     conn.commit()
 
@@ -134,7 +154,14 @@ def _quality_fields(status, stats=None, stats_json=None, error=None):
     }
 
 
-def create(job_id, filename, input_path, pipeline=None):
+def create(job_id, filename, input_path, pipeline=None, *, is_public=False,
+           contact_name=None, contact_phone=None, source_platform=None,
+           public_notes=None):
+    """创建任务记录。
+
+    管家式 MVP 的公开提交传 is_public=True + contact_* 字段；
+    内部上传不传这些字段，行为与旧版完全一致。
+    """
     now = time.time()
     quality = _quality_fields('queued')
     conn = _get_conn()
@@ -142,14 +169,17 @@ def create(job_id, filename, input_path, pipeline=None):
         """INSERT INTO tasks(
              id,filename,pipeline,status,input_path,
              quality_score_value,quality_grade,quality_score_json,
-             created_at,updated_at
-           ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+             created_at,updated_at,
+             is_public,contact_name,contact_phone,source_platform,public_notes
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             job_id, filename, pipeline, 'queued', input_path,
             quality['quality_score_value'],
             quality['quality_grade'],
             quality['quality_score_json'],
             now, now,
+            1 if is_public else 0,
+            contact_name, contact_phone, source_platform, public_notes,
         ))
     conn.commit()
     return get(job_id)
@@ -386,6 +416,19 @@ def list_tasks(limit=100, offset=0, task_filter='all', task_sort='created_desc')
         (*params, limit, offset)
     ).fetchall()
     return [_row(r) for r in rows]
+
+
+def list_public_submissions(limit=100, offset=0):
+    """管理员查看公开提交(is_public=1),按时间倒序。返回列表+总数。"""
+    conn = _get_conn()
+    total = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE is_public=1"
+    ).fetchone()[0]
+    rows = conn.execute(
+        "SELECT * FROM tasks WHERE is_public=1 ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        (limit, offset),
+    ).fetchall()
+    return [_row(r) for r in rows], total
 
 
 def count_tasks(task_filter='all'):

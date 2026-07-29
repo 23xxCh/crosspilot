@@ -17,6 +17,7 @@ VERSION_FILE = ROOT / 'crosspilot' / 'version.py'
 REQUIRED_RUNTIME_FILES = (
     'Dockerfile',
     'docker-compose.yml',
+    'CrossPilot.spec',
     'keys.example.json',
     'pyproject.toml',
     'uv.lock',
@@ -36,6 +37,10 @@ REQUIRED_RUNTIME_FILES = (
     'scripts/pipeline_log.py',
     'scripts/process_amazon.py',
     'scripts/process_ebay_tk.py',
+    'scripts/pipelines/amazon_constants.py',
+    'scripts/pipelines/amazon_io.py',
+    'scripts/pipelines/amazon_review_gen.py',
+    'scripts/pipelines/amazon_stages.py',
     'scripts/pipelines/ebay_shared.py',
     'scripts/pipelines/ebay_stages.py',
     'scripts/release_preflight.py',
@@ -50,9 +55,18 @@ REQUIRED_RUNTIME_FILES = (
     'web/runner.py',
     'web/store.py',
     'web/updater.py',
+    'web/static/analytics.js',
     'web/static/app.js',
+    'web/static/dashboard.js',
+    'web/static/helpers.js',
     'web/static/index.html',
+    'web/static/quality.js',
+    'web/static/runtime.js',
+    'web/static/settings.js',
     'web/static/styles.css',
+    'web/static/tasks.js',
+    'web/static/templates.js',
+    'web/static/upload.js',
 )
 SEMVER_RE = re.compile(r'^\d+\.\d+\.\d+$')
 

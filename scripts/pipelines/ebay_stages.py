@@ -13,10 +13,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import openpyxl
+from crosspilot.prompt_registry import (
+    build_runtime_signature,
+    get_prompt_registry,
+)
 from adapters import detect_adapter
 from pipeline_log import log as _log, new_request_id, PipelineMetrics
 from services.constants import IMAGE_POLICY_VERSION
-from model_provider import AgnesProvider, DeepSeekProvider, ProviderQuotaError
+from model_provider import ProviderQuotaError
 from concurrency import adaptive_map
 from pipelines.ebay_shared import (
     # sessions & keys
@@ -49,45 +53,47 @@ def _is_valid_url(val):
 
 
 TEXT_CACHE_POLICY_VERSION = 'ebay_text_cache_v1'
+_prompts = get_prompt_registry()
 
 
 def _text_model_signature():
     """Return provider/model identity without exposing API keys."""
-    try:
-        provider = get_provider()
-        configured = provider._config.get('text_provider', 'deepseek')
-        text_provider = provider._providers.get('text')
-    except Exception:
-        configured = os.environ.get('CROSSPILOT_TEXT_PROVIDER', 'deepseek')
-        text_provider = None
-    if text_provider is None:
-        text_provider = (
-            AgnesProvider('') if configured == 'agnes'
-            else DeepSeekProvider('')
-        )
-    models = []
-    for attr in ('MODEL', 'FALLBACK_MODEL', 'TEXT_MODEL'):
-        value = getattr(text_provider, attr, None)
-        if value:
-            models.append(value)
+    from crosspilot.config import load_config
+
+    cfg = load_config()
+    configured = cfg.get('TEXT_PROVIDER', 'deepseek')
+    models = (
+        [
+            cfg.get('AGNES_TEXT_MODEL', ''),
+        ]
+        if configured == 'agnes'
+        else [
+            cfg.get('DEEPSEEK_TEXT_MODEL', ''),
+            cfg.get('DEEPSEEK_TEXT_FALLBACK_MODEL', ''),
+        ]
+    )
     return {
         'provider': configured,
-        'models': models,
+        'models': [model for model in models if model],
     }
 
 
 def _current_text_cache_version():
-    payload = {
-        'policy': TEXT_CACHE_POLICY_VERSION,
-        'model': _text_model_signature(),
-        'prompts': {
-            'title_translate': TITLE_TRANSLATE_PROMPT,
-            'desc_clean': DESC_PROMPT,
-            'desc_translate': TRANSLATE_PROMPT,
-        },
-    }
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]
+    return build_runtime_signature(
+        TEXT_CACHE_POLICY_VERSION,
+        "translation.title",
+        "ebay.description_clean",
+        "translation.text",
+    )
+
+
+def _current_image_cache_version():
+    return build_runtime_signature(
+        IMAGE_POLICY_VERSION,
+        "images.review",
+        "images.main_product",
+        "images.variant",
+    )
 
 
 def _record_cache_stat(cache, name, hits=0, misses=0):
@@ -137,6 +143,7 @@ def _setup_cache(tp):
     os.makedirs(_CACHE_DIR, exist_ok=True)
     cache_version = 2
     text_cache_version = _current_text_cache_version()
+    image_cache_version = _current_image_cache_version()
     _now = time.time()
     for _cf in glob.glob(os.path.join(_CACHE_DIR, '*.json')):
         try:
@@ -155,10 +162,14 @@ def _setup_cache(tp):
                 c = json.load(_cache_f)
             if c.get('version') != cache_version:
                 raise ValueError("缓存版本已过期")
-            if c.get('image_policy_version') != IMAGE_POLICY_VERSION:
+            if (
+                c.get('image_policy_version') != IMAGE_POLICY_VERSION
+                or c.get('image_cache_version') != image_cache_version
+            ):
                 c['review_results'] = {}
                 c['gen_results'] = {}
                 c['image_policy_version'] = IMAGE_POLICY_VERSION
+                c['image_cache_version'] = image_cache_version
                 print("图片策略已更新，旧图审和生图缓存已失效", flush=True)
             if c.get('text_cache_version') != text_cache_version:
                 c['title_translations'] = {}
@@ -173,6 +184,7 @@ def _setup_cache(tp):
             return c
         except Exception:
             return {'version': cache_version, 'image_policy_version': IMAGE_POLICY_VERSION,
+                    'image_cache_version': image_cache_version,
                     'text_cache_version': text_cache_version, 'cache_stats': {},
                     'review_results':{},'gen_results':{},
                     'title_translations':{},'desc_cleaned':{},'desc_translations':{}}
@@ -218,10 +230,12 @@ def _stage_review(status, all_urls, url_map, cache, _save_cache):
         review_single,
         operation='review',
         initial_workers=REVIEW_CONCURRENCY,
-        min_workers=10,
+        min_workers=2,
         is_success=lambda result: result is not None and not isinstance(result, Exception),
         on_result=_review_done,
         terminal_exceptions=(ProviderQuotaError,),
+        backoff_s=2,
+        max_backoff_s=15,
     )
     _record_concurrency_stat(cache, 'review', review_stats)
     if review_stats.get('reductions'):
@@ -247,6 +261,8 @@ def _stage_review(status, all_urls, url_map, cache, _save_cache):
                 else None
             ),
             terminal_exceptions=(ProviderQuotaError,),
+            backoff_s=2,
+            max_backoff_s=15,
         )
         _record_concurrency_stat(cache, 'review_retry', retry_stats)
 
@@ -301,6 +317,8 @@ def _stage_generate(status, to_regen, url_map, cache, _save_cache, mains_mem, va
             is_success=lambda result: bool(result) and not isinstance(result, Exception),
             on_result=_gen_done,
             terminal_exceptions=(ProviderQuotaError,),
+            backoff_s=2,
+            max_backoff_s=15,
         )
         _record_concurrency_stat(cache, 'image_gen', gen_stats)
         if gen_stats.get('reductions'):
@@ -471,7 +489,11 @@ def _stage_translate_titles(status, total_rows, titles_mem, cache, _save_cache):
         print(f"标题翻译(个体fallback): {len(untranslated)} 条重试单条翻译({TEXT_CONCURRENCY}并发)...", flush=True)
         done = 0
         with ThreadPoolExecutor(max_workers=min(TEXT_CONCURRENCY, len(untranslated))) as pool:
-            futures = {pool.submit(translate_text, t, TITLE_TRANSLATE_PROMPT): t for t in untranslated}
+            title_prompt = _prompts.get("translation.title")
+            futures = {
+                pool.submit(translate_text, t, title_prompt): t
+                for t in untranslated
+            }
             for future in as_completed(futures):
                 t = futures[future]
                 try:
@@ -528,7 +550,11 @@ def _stage_clean_descs(status, total_rows, descs_mem, cache, _save_cache):
         print(f"描述清洗(单条fallback): {len(missing)} 条...", flush=True)
         with ThreadPoolExecutor(max_workers=min(TEXT_CONCURRENCY, len(missing))) as pool:
             futures = {
-                pool.submit(clean_text_ai, text, DESC_PROMPT): text
+                pool.submit(
+                    clean_text_ai,
+                    text,
+                    _prompts.get("ebay.description_clean"),
+                ): text
                 for text in missing
             }
             for future in as_completed(futures):
@@ -583,7 +609,11 @@ def _stage_translate_descs(status, total_rows, descs_mem, cache, _save_cache):
         print(f"描述翻译(个体fallback): {len(missed)} 条重试...", flush=True)
         done = 0
         with ThreadPoolExecutor(max_workers=min(TEXT_CONCURRENCY, len(missed))) as pool:
-            futures = {pool.submit(translate_text, t, TRANSLATE_PROMPT): t for t in missed}
+            text_prompt = _prompts.get("translation.text")
+            futures = {
+                pool.submit(translate_text, t, text_prompt): t
+                for t in missed
+            }
             for future in as_completed(futures):
                 t = futures[future]
                 try:
