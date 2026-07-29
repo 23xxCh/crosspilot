@@ -1,205 +1,126 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import Mock
 
-import pytest
-
-from scripts.pipeline_log import PipelineMetrics
-from scripts.pipelines import amazon_delivery
-from scripts.pipelines import amazon_stages
-from scripts.pipelines import amazon_text
-from scripts.pipelines.amazon_runtime import AmazonRunContext
+from amazon_processor import delivery
+from amazon_processor.config.models import ModelRegistry
+from amazon_processor.config.prompts import PromptRegistry
+from amazon_processor.log import PipelineMetrics
+from amazon_processor.runtime import RunContext
 
 
-def _context(tmp_path, rows=None) -> AmazonRunContext:
-    status = Mock()
-    status.update = Mock()
-    return AmazonRunContext(
-        source_path=str(tmp_path / "input.json"),
+def _context(tmp_path: Path) -> RunContext:
+    return RunContext(
+        source_path=tmp_path / "input.json",
         request_id="run-test",
         provider=Mock(),
-        status=status,
         metrics=PipelineMetrics(),
-        data=list(rows or []),
+        data=[{"id": "p1"}],
     )
 
 
-def test_run_context_transforms_rows_and_records_degraded_stage(
-    tmp_path,
-) -> None:
-    context = _context(tmp_path, [{"id": "p1"}])
+def test_run_context_transforms_rows_and_records_degrade(tmp_path) -> None:
+    context = _context(tmp_path)
 
     def optimize(rows, progress=None):
-        rows[0]["_quality_issues"] = [{
-            "code": "title_ai_fallback",
-        }]
+        rows[0]["_quality_issues"] = [{"code": "title_ai_fallback"}]
         progress(1, 1)
         return rows
 
-    result = context.transform(
-        "标题优化",
-        optimize,
-        unused_option=True,
-    )
-
-    assert result is context.data
-    context.status.stage.assert_called_once_with("标题优化", 0, 1)
-    context.status.update.assert_called_once_with(1, 1)
+    assert context.transform("标题优化", optimize) is context.data
     stage = context.metrics.to_dict()["stages"]["标题优化"]
     assert stage["items"] == 1
     assert stage["success"] == 0
 
 
-def test_run_context_marks_failed_stage_and_reraises(tmp_path) -> None:
-    context = _context(tmp_path, [{"id": "p1"}])
-    error = RuntimeError("stage failed")
-
-    def fail(_rows, progress=None):
-        del progress
-        raise error
-
-    with pytest.raises(RuntimeError, match="stage failed"):
-        context.transform("描述清洗", fail)
-
-    context.status.failed.assert_called_once_with("描述清洗", error)
-
-
-def test_delivery_interface_writes_all_run_artifacts(
+def test_delivery_publishes_one_fixed_artifact_set(
     tmp_path,
     monkeypatch,
 ) -> None:
-    source = tmp_path / "input.json"
-    source.write_text("{}", encoding="utf-8")
-    output = tmp_path / "output.json"
-    context = _context(tmp_path, [{
+    output_root = tmp_path / "输出"
+    runtime_root = tmp_path / ".runtime"
+    monkeypatch.setattr(delivery, "OUTPUT_ROOT", output_root)
+    monkeypatch.setattr(delivery, "RUNTIME_ROOT", runtime_root)
+    monkeypatch.setattr(delivery, "LATEST_DIR", output_root / "最新")
+    monkeypatch.setattr(delivery, "ARCHIVE_DIR", output_root / "归档")
+
+    def fake_review(input_path, output_dir, **_kwargs):
+        output = Path(output_dir)
+        (output / "终审包.html").write_text("review", encoding="utf-8")
+        (output / "审核数据.json").write_text("{}", encoding="utf-8")
+        (output / "图片").mkdir()
+        return {"products": 1}
+
+    monkeypatch.setattr(delivery, "export_review", fake_review)
+    context = _context(tmp_path)
+    context.data = [{
         "id": "p1",
         "title": "Generic Product",
         "desc": "Useful product description",
-        "main_img": "https://img.example/main.jpg",
+        "main_img": "https://img/main.jpg",
         "extra_imgs": [],
         "var_imgs": [],
-        "bullets": [f"Useful product detail {index}" for index in range(5)],
+        "bullets": [f"Useful detail {index}" for index in range(5)],
         "keywords": (
-            "product, useful item, replacement part, durable material, "
-            "easy installation, daily use, accessory, hardware, kit, universal"
+            "product, item, part, material, installation, use, "
+            "accessory, hardware, kit, universal"
         ),
-    }])
-    context.source_path = str(source)
-    context.runtime_metrics = {
-        "quarantined_products": [],
-        "image_remediation": {"reviewed": 1},
-    }
+        "_image_assessments": [{
+            "role": "main",
+            "url": "https://img/main.jpg",
+            "assessment": {"status": "safe"},
+        }],
+    }]
+    context.runtime_metrics["image_safety_gate"] = {"reviewed": 1}
 
-    def write_output(rows, source_path, progress=None):
-        del rows, source_path
-        progress(1, 1)
-        output.write_text("{}", encoding="utf-8")
-        return str(output)
+    result = delivery.deliver(context, additional_problem_ids=[])
 
-    monkeypatch.setattr(
-        amazon_delivery,
-        "_stage_write_output",
-        write_output,
+    assert result.output_path == output_root / "最新" / delivery.REFILL_NAME
+    payload = json.loads(result.output_path.read_text(encoding="utf-8"))
+    assert tuple(payload) == (
+        "商品id",
+        "产品标题",
+        "产品描述",
+        "产品图片链接",
+        "变种图片链接",
+        "Bullet Point1",
+        "Bullet Point2",
+        "Bullet Point3",
+        "Bullet Point4",
+        "Bullet Point5",
+        "关键词信息",
+        "有问题的产品id",
     )
-    monkeypatch.setattr(
-        amazon_delivery,
-        "_validate_amazon_rows",
-        lambda rows, extra_issues=None: {
-            "passed": True,
-            "issues": list(extra_issues or []),
-        },
-    )
-    monkeypatch.setattr(
-        amazon_delivery,
-        "_attach_audit_to_validation",
-        lambda validation, rows: validation,
-    )
-    monkeypatch.setattr(
-        amazon_delivery,
-        "_create_review_package",
-        lambda *args, **kwargs: {"status": "created"},
-    )
-
-    result = amazon_delivery.deliver_amazon_output(context)
-
-    assert result == str(output)
-    quarantine = json.loads(
-        (tmp_path / "output_隔离清单.json").read_text(
-            encoding="utf-8",
-        )
-    )
-    metrics = json.loads(
-        (tmp_path / "output_metrics.json").read_text(
-            encoding="utf-8",
-        )
-    )
-    assert quarantine["run_id"] == "run-test"
-    assert metrics["review_package"] == {"status": "created"}
-    context.status.finish.assert_called_once()
+    assert result.review_path.is_file()
+    assert result.review_data_path.is_file()
 
 
-def test_process_amazon_keeps_delivery_compatibility_adapter() -> None:
-    from scripts import process_amazon
+def test_prompt_and_model_edits_change_cache_signatures(tmp_path) -> None:
+    prompt_path = tmp_path / "prompts" / "amazon" / "title_optimize.txt"
+    prompt_path.parent.mkdir(parents=True)
+    prompt_path.write_text("Optimize {title}", encoding="utf-8")
+    prompts = PromptRegistry(prompt_path.parents[1])
+    before_prompt = prompts.signature("amazon.title_optimize")
+    prompt_path.write_text("Optimize for traffic {title}", encoding="utf-8")
+    after_prompt = prompts.signature("amazon.title_optimize")
 
+    settings = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "settings.json"
+        ).read_text(encoding="utf-8")
+    )
+    first_path = tmp_path / "settings-first.json"
+    second_path = tmp_path / "settings-second.json"
+    first_path.write_text(json.dumps(settings), encoding="utf-8")
+    settings["profiles"]["production"]["text"]["model"] = "another-model"
+    second_path.write_text(json.dumps(settings), encoding="utf-8")
+
+    assert before_prompt != after_prompt
     assert (
-        process_amazon._assert_formal_images_are_safe
-        is amazon_delivery._assert_formal_images_are_safe
-    )
-    assert (
-        process_amazon._review_root_for_output
-        is amazon_delivery._review_root_for_output
-    )
-
-
-def test_private_runner_name_forwards_to_public_interface(
-    monkeypatch,
-) -> None:
-    from scripts import process_amazon
-
-    monkeypatch.setattr(
-        process_amazon,
-        "run_amazon_pipeline",
-        lambda source_path: f"done:{source_path}",
-    )
-
-    assert process_amazon._main_impl("input.json") == "done:input.json"
-
-
-def test_dirty_description_filter_only_removes_pure_store_template() -> None:
-    rows = [
-        {
-            "id": "bad",
-            "desc": "Welcome to my store. Visit our store.",
-        },
-        {
-            "id": "good",
-            "desc": (
-                "Welcome to my store. Material: stainless steel. "
-                "Package includes mounting hardware for installation."
-            ),
-        },
-    ]
-
-    retained, dirty_ids = amazon_text.remove_dirty_descriptions(
-        rows
-    )
-
-    assert [row["id"] for row in retained] == ["good"]
-    assert dirty_ids == ["bad"]
-    assert rows[0]["_quality_issues"][0]["code"] == "dirty_description"
-
-
-def test_amazon_stages_is_a_stable_text_compatibility_adapter() -> None:
-    assert (
-        amazon_stages._stage_optimize_titles
-        is amazon_text.optimize_titles
-    )
-    assert (
-        amazon_stages._stage_clean_descs
-        is amazon_text.clean_descriptions
-    )
-    assert (
-        amazon_stages._stage_generate_bullets_keywords
-        is amazon_text.generate_bullets_keywords
+        ModelRegistry.from_file(first_path).signature()
+        != ModelRegistry.from_file(second_path).signature()
     )

@@ -1,26 +1,6 @@
 from __future__ import annotations
 
-from scripts.pipelines import amazon_constants
-from scripts.pipelines import amazon_quality
-
-
-def test_amazon_constants_is_a_stable_quality_adapter() -> None:
-    assert (
-        amazon_constants._add_audit
-        is amazon_quality.add_audit
-    )
-    assert (
-        amazon_constants._normalize_keywords_for_row
-        is amazon_quality.normalize_keywords_for_row
-    )
-    assert (
-        amazon_constants._validate_amazon_rows
-        is amazon_quality.validate_amazon_rows
-    )
-    assert (
-        amazon_constants.AMAZON_REVIEW_CONCURRENCY
-        == amazon_quality.AMAZON_REVIEW_CONCURRENCY
-    )
+from amazon_processor import quality as amazon_quality
 
 
 def test_quality_interface_deduplicates_issue_and_records_audit() -> None:

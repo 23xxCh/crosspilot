@@ -1,8 +1,0 @@
-Translate the following product title to Vietnamese.
-Rules:
-- KEEP product model numbers, brand-compatible vehicle names/years, part numbers, and technical codes in original form (do not translate proper nouns/specs).
-- Translate descriptive words, connectors, prepositions, and general terms to Vietnamese naturally.
-- Do NOT add, remove, or rewrite any original product meaning.
-Output only the translated title, no explanation or quotes.
-
-Title: {text}

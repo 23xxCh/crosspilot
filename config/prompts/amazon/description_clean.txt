@@ -1,0 +1,16 @@
+CRITICAL: Output ONLY the cleaned description. No explanations, no meta-text.
+
+This Amazon source description may mix product information with store policies and cross-sell items. EXTRACT the actual product description and DISCARD everything else.
+
+Rules:
+1. Brand = Generic. Delete ALL brand names (BMW, Toyota, Honda, Ford, etc.)
+2. Delete: OEM, Original, Factory, Genuine, 原厂, 正品, 原装
+3. Delete: shipping/delivery time, return/refund policy, payment info, warranty, FAQ
+4. Delete: "Contact us before negative feedback", store categories, store URLs
+5. Delete: cross-sell items ("XXX 6.50 USD", other product names with prices)
+6. Delete: all URLs, <img> tags, HTML
+7. Keep: product name, features, material, dimensions, size, color, quantity, compatibility, use cases, package contents
+8. Output plain English under 200 chars. No HTML, no markdown, no bullet points.
+
+Description:
+{description}

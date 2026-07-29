@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 
-from crosspilot.image_risk import normalize_image_assessment
-from scripts.pipelines import amazon_image_safety
-from scripts.pipelines.amazon_image_safety import remediation
+from amazon_processor.images.risk import normalize_image_assessment
+from amazon_processor.images import gate as amazon_image_safety
+from amazon_processor.images import gate as remediation
 
 
 def assessment(
@@ -290,6 +290,11 @@ def test_generated_main_still_risky_quarantines_product(
         for item in metrics["quarantined_products"][0]["reasons"]
     }
     assert "main_image_remediation_failed" in reason_codes
+    assert metrics["image_safety_gate"]["generated_reviewed"] >= 1
+    assert (
+        metrics["image_remediation"]["generated_candidates_reviewed"]
+        == metrics["image_safety_gate"]["generated_reviewed"]
+    )
 
 
 def test_old_boolean_cache_is_invalidated_and_not_reused(
@@ -343,20 +348,16 @@ def test_human_false_positive_override_releases_exact_image_role(
         {main: high_risk},
         confirmations={main: high_risk},
     )
-    override_path = tmp_path / "overrides.json"
-    override_path.write_text(json.dumps({
-        "version": 1,
-        "overrides": [{
+    monkeypatch.setattr(
+        remediation,
+        "load_manual_overrides",
+        lambda _cache_path: {("p6", "main", main): {
             "product_id": "p6",
             "action": "false_positive",
             "role": "main",
             "image_url": main,
             "note": "人工确认只是无品牌几何图形",
-        }],
-    }), encoding="utf-8")
-    monkeypatch.setenv(
-        "CROSSPILOT_IMAGE_REVIEW_OVERRIDES",
-        str(override_path),
+        }},
     )
     rows = [{
         "id": "p6",

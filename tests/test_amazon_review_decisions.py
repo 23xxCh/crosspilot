@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from scripts.apply_amazon_review_decisions import apply_decisions
+from amazon_processor.review.decisions import apply_decisions
 
 
 def payload() -> dict:
@@ -78,12 +78,7 @@ def test_delete_attachment_and_product_with_backup(tmp_path) -> None:
     ]
     assert updated["有问题的产品id"] == ["p2"]
     assert result["status"] == "applied"
-    assert (tmp_path / "审核应用备份").exists()
-    assert (
-        list((tmp_path / "审核应用备份").iterdir())[0]
-        / "终审包"
-        / "marker.txt"
-    ).exists()
+    assert list(tmp_path.glob("formal.backup_*.json"))
 
 
 def test_main_or_variant_cannot_be_deleted(tmp_path) -> None:
@@ -140,9 +135,12 @@ def test_false_positive_for_quarantined_product_is_recorded(
     result = apply_decisions(formal, decision_path)
 
     overrides = json.loads(
-        (tmp_path / "formal_图片人工覆盖.json").read_text(
-            encoding="utf-8"
-        )
+        (
+            tmp_path
+            / ".runtime"
+            / "cache"
+            / "review_overrides.json"
+        ).read_text(encoding="utf-8")
     )
     assert overrides["overrides"][0]["product_id"] == "quarantined-id"
     assert result["status"] == "applied"

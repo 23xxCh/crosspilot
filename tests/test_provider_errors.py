@@ -5,7 +5,7 @@ import requests
 
 
 def test_http_error_classification_is_structured():
-    from scripts.providers.errors import (
+    from amazon_processor.providers.support import (
         ProviderAuthError,
         ProviderQuotaError,
         ProviderRateLimitError,
@@ -37,7 +37,7 @@ def test_http_error_classification_is_structured():
 
 
 def test_provider_error_public_context_is_redacted():
-    from scripts.providers.errors import ProviderRateLimitError
+    from amazon_processor.providers.support import ProviderRateLimitError
 
     error = ProviderRateLimitError(
         "请求过多",
@@ -68,7 +68,7 @@ def test_provider_error_public_context_is_redacted():
 
 
 def test_deepseek_timeout_raises_typed_error():
-    from scripts.model_provider import (
+    from amazon_processor.providers import (
         DeepSeekProvider,
         ProviderTimeoutError,
     )
@@ -86,7 +86,7 @@ def test_deepseek_timeout_raises_typed_error():
 
 
 def test_provider_does_not_mask_programming_errors():
-    from scripts.model_provider import DeepSeekProvider
+    from amazon_processor.providers import DeepSeekProvider
 
     provider = DeepSeekProvider("secret-key")
     provider._session = Mock()
@@ -97,7 +97,7 @@ def test_provider_does_not_mask_programming_errors():
 
 
 def test_deepseek_invalid_success_payload_raises_response_error():
-    from scripts.model_provider import (
+    from amazon_processor.providers import (
         DeepSeekProvider,
         ProviderResponseError,
     )
@@ -113,7 +113,7 @@ def test_deepseek_invalid_success_payload_raises_response_error():
 
 
 def test_composite_image_route_falls_back_on_typed_provider_error():
-    from scripts.model_provider import (
+    from amazon_processor.providers import (
         CompositeProvider,
         ProviderUnavailableError,
     )
@@ -142,11 +142,11 @@ def test_composite_image_route_falls_back_on_typed_provider_error():
     )
 
 
-def test_legacy_facade_reexports_provider_modules():
-    import scripts.model_provider as facade
-    from scripts.providers.agnes import AgnesProvider
-    from scripts.providers.composite import CompositeProvider
-    from scripts.providers.deepseek import DeepSeekProvider
+def test_provider_interface_exports_implementations():
+    import amazon_processor.providers as facade
+    from amazon_processor.providers.agnes import AgnesProvider
+    from amazon_processor.providers.composite import CompositeProvider
+    from amazon_processor.providers.deepseek import DeepSeekProvider
 
     assert facade.AgnesProvider is AgnesProvider
     assert facade.DeepSeekProvider is DeepSeekProvider

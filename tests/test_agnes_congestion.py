@@ -6,7 +6,7 @@ import requests
 
 
 def test_congestion_gate_opens_and_recovers_with_one_half_open_probe():
-    from scripts.providers.congestion import CongestionGate
+    from amazon_processor.providers.support import CongestionGate
 
     now = [100.0]
     gate = CongestionGate(
@@ -30,7 +30,7 @@ def test_congestion_gate_opens_and_recovers_with_one_half_open_probe():
 
 
 def test_congestion_policy_uses_short_bounded_retry_delay():
-    from scripts.providers.congestion import CongestionPolicy
+    from amazon_processor.providers.support import CongestionPolicy
 
     policy = CongestionPolicy(
         retry_limit=1,
@@ -49,9 +49,11 @@ def test_congestion_policy_uses_short_bounded_retry_delay():
 
 
 def test_agnes_image_503_retries_once_without_long_blocking():
-    from scripts.providers.agnes import AgnesProvider
-    from scripts.providers.congestion import CongestionPolicy
-    from scripts.providers.errors import ProviderUnavailableError
+    from amazon_processor.providers.agnes import AgnesProvider
+    from amazon_processor.providers.support import (
+        CongestionPolicy,
+        ProviderUnavailableError,
+    )
 
     unavailable = Mock(
         ok=False,
@@ -84,9 +86,11 @@ def test_agnes_image_503_retries_once_without_long_blocking():
 
 
 def test_agnes_open_circuit_skips_http_until_cooldown():
-    from scripts.providers.agnes import AgnesProvider
-    from scripts.providers.congestion import CongestionPolicy
-    from scripts.providers.errors import ProviderUnavailableError
+    from amazon_processor.providers.agnes import AgnesProvider
+    from amazon_processor.providers.support import (
+        CongestionPolicy,
+        ProviderUnavailableError,
+    )
 
     now = [100.0]
     unavailable = Mock(
@@ -129,7 +133,7 @@ def test_agnes_open_circuit_skips_http_until_cooldown():
 
 
 def test_composite_moves_to_fallback_after_fast_primary_503():
-    from scripts.providers.composite import CompositeProvider
+    from amazon_processor.providers.composite import CompositeProvider
 
     unavailable = Mock(
         ok=False,
@@ -168,7 +172,7 @@ def test_composite_moves_to_fallback_after_fast_primary_503():
 
 
 def test_composite_records_primary_congestion_circuit_skip():
-    from scripts.providers.composite import CompositeProvider
+    from amazon_processor.providers.composite import CompositeProvider
 
     unavailable = Mock(
         ok=False,
@@ -210,7 +214,7 @@ def test_composite_records_primary_congestion_circuit_skip():
 
 
 def test_composite_falls_back_immediately_after_primary_timeout():
-    from scripts.providers.composite import CompositeProvider
+    from amazon_processor.providers.composite import CompositeProvider
 
     provider = CompositeProvider({
         "text_provider": "deepseek",
@@ -242,8 +246,8 @@ def test_composite_falls_back_immediately_after_primary_timeout():
 
 
 def test_agnes_vision_timeout_does_not_repeat_long_request():
-    from scripts.providers.agnes import AgnesProvider
-    from scripts.providers.errors import ProviderTimeoutError
+    from amazon_processor.providers.agnes import AgnesProvider
+    from amazon_processor.providers.support import ProviderTimeoutError
 
     provider = AgnesProvider(
         "test-key",
@@ -265,7 +269,7 @@ def test_agnes_vision_timeout_does_not_repeat_long_request():
 
 
 def test_agnes_assess_image_returns_structured_result():
-    from scripts.providers.agnes import AgnesProvider
+    from amazon_processor.providers.agnes import AgnesProvider
 
     response = Mock(ok=True, status_code=200, text="ok", headers={})
     response.json.return_value = {
@@ -296,7 +300,7 @@ def test_agnes_assess_image_returns_structured_result():
 
 
 def test_composite_falls_back_immediately_after_primary_429():
-    from scripts.providers.composite import CompositeProvider
+    from amazon_processor.providers.composite import CompositeProvider
 
     rate_limited = Mock(
         ok=False,

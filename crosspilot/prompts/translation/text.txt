@@ -1,9 +1,0 @@
-Translate the following product text to Vietnamese.
-Rules:
-- Preserve ALL product information: material, dimensions, specifications, color, quantity, type, model numbers, product names, technical specs — keep numbers/units/model codes UNCHANGED.
-- Keep the original formatting, HTML tags (p, ul, li, br, img) and punctuation intact.
-- IMPORTANT: Keep the placeholder __IMG__ EXACTLY as-is (do not translate or remove it).
-- If already in Vietnamese, return unchanged.
-Output Vietnamese translation directly, no explanation or prefix/suffix.
-
-Text: {text}

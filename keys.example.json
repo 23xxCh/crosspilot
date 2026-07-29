@@ -1,8 +1,0 @@
-{
-  "_comment": "旧版本兼容模板。新安装请使用 .env.example 和 crosspilot/model_profiles.json。",
-  "text_provider": "deepseek",
-  "vision_provider": "agnes",
-  "image_gen_provider": "agnes",
-  "deepseek_key": "",
-  "agnes_key": ""
-}

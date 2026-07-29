@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import json
 
-from scripts import export_amazon_cn_review as legacy_adapter
-from scripts import review_package
-from scripts.review_package import exporter
+from amazon_processor.review import exporter
+from amazon_processor.review import exporter as review_package
 
 
 def _payload() -> dict:
@@ -26,15 +25,6 @@ def _payload() -> dict:
         "关键词信息": ["one, two"],
         "有问题的产品id": [],
     }
-
-
-def test_legacy_exporter_is_a_stable_adapter() -> None:
-    assert legacy_adapter.export_review is review_package.export_review
-    assert legacy_adapter.render_html is review_package.render_html
-    assert (
-        legacy_adapter.prepare_shared_review_cache
-        is review_package.prepare_shared_review_cache
-    )
 
 
 def test_export_review_composes_package_and_quarantine(
@@ -118,15 +108,10 @@ def test_export_review_composes_package_and_quarantine(
     assert summary["products"] == 2
     assert summary["image_occurrences"] == 3
     assert summary["provider_metrics"] == {"calls": 1}
-    for filename in (
-        "中文文案检查表.json",
-        "图片映射.json",
-        "中文文案检查表.html",
-        "导出说明.txt",
-    ):
+    for filename in ("审核数据.json", "终审包.html"):
         assert (output_dir / filename).is_file()
     review_data = json.loads(
-        (output_dir / "中文文案检查表.json").read_text(
+        (output_dir / "审核数据.json").read_text(
             encoding="utf-8",
         )
     )

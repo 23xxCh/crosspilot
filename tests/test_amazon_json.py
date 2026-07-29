@@ -4,11 +4,13 @@ import os
 
 import pytest
 
-from scripts.services.amazon_json import (
+from amazon_processor.schema import (
     AMAZON_JSON_INPUT_FIELDS,
     AMAZON_JSON_OUTPUT_FIELDS,
     build_output_payload,
     load_columnar_json,
+    load_rows,
+    write_output_json,
 )
 
 
@@ -112,21 +114,19 @@ def test_build_output_payload_includes_missing_description_problem_id():
     assert payload['有问题的产品id'] == ['item-1']
 
 
-def test_stage_write_output_uses_json_for_json_input(tmp_path):
-    import scripts.process_amazon as process_amazon
-
+def test_write_output_uses_exact_json_contract(tmp_path):
     input_path = tmp_path / '商品采集表.json'
     input_path.write_text(
         json.dumps(_valid_input(), ensure_ascii=False),
         encoding='utf-8',
     )
 
-    output = process_amazon._stage_write_output(
+    output = write_output_json(
         _processed_rows(),
-        str(input_path),
+        tmp_path / "跨境电商自动化回填表.json",
     )
 
-    assert output.endswith('商品回填表.json')
+    assert output.endswith('跨境电商自动化回填表.json')
     with open(output, encoding='utf-8') as handle:
         payload = json.load(handle)
     assert tuple(payload) == AMAZON_JSON_OUTPUT_FIELDS
@@ -183,10 +183,8 @@ def test_load_rejects_invalid_image_url(tmp_path):
         load_columnar_json(str(path))
 
 
-def test_stage_read_json_applies_requested_row_limit(tmp_path, monkeypatch):
+def test_load_rows_applies_requested_row_limit(tmp_path):
     """CLI --max-rows must slice valid input instead of rejecting the full file."""
-    import scripts.process_amazon as process_amazon
-
     payload = {
         '商品id': [f'item-{index}' for index in range(3)],
         '产品标题': [f'Title {index}' for index in range(3)],
@@ -199,8 +197,6 @@ def test_stage_read_json_applies_requested_row_limit(tmp_path, monkeypatch):
     }
     path = tmp_path / '商品采集表.json'
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
-    monkeypatch.setenv('CROSSPILOT_MAX_ROWS', '2')
-
-    rows = process_amazon._stage_read_json(None, str(path))
+    rows = load_rows(path, max_rows=2)
 
     assert [row['id'] for row in rows] == ['item-0', 'item-1']

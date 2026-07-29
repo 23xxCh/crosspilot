@@ -1,7 +1,0 @@
-Translate the following Chinese product text to Vietnamese.
-- CRITICAL: Convert ALL Chinese (中文) characters to Vietnamese. No Chinese characters may remain.
-- Preserve ONLY proper nouns: brand names, model numbers, part numbers (e.g. LED, ABS, BMW, Honda).
-- Translate ALL other words to Vietnamese naturally.
-Output Vietnamese translation directly, no explanation or quotes.
-
-Text: {text}

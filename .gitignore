@@ -1,61 +1,32 @@
-# Excel 锁文件
-~\$*.xlsx
-
-# API keys（真实密钥不入库，参考 keys.example.json）
+# Secrets
 .env
 .env.*
 !.env.example
 keys.json
 agnes_key.txt
 
-# Python 缓存
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
 .venv/
 
-# 运行产物
-*_status.json
-*_cache.json
+# Runtime and delivery
+.runtime/
+输出/
 *.log
 
-# Web 运行时数据（SQLite + 上传文件 + 清洗输出）
-data/uploads/
-data/cache/
-data/tasks.db*
-data/*.log
-data/server.log
-data/queue-manager.lock
-*_cleaned.xlsx
+# Local source data
+亚马逊表/
+跨境电商自动化采集表*.json
 
-# 图生图临时目录
-generated_images/
-
-# IDE
-.vscode/
-.idea/
-
-# Local agent/tooling notes
+# Local tools
 .claude/
 .context/
 .scratch/
+.vscode/
+.idea/
 
-# PyInstaller
-dist/
+# Removed build artifacts
 build/
-*.spec
-!CrossPilot.spec
-
-# Update artifacts
-_update/
-*.xlsx
-!data/sample_small.xlsx
-亚马逊表/
-图片和翻译文件/
-
-# Watcher runtime queues and generated delivery files
-watch/input/
-watch/processing/
-watch/output/
-
-# Local source-data exports
-跨境电商自动化采集表*.json
+dist/

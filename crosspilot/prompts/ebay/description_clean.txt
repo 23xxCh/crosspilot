@@ -1,8 +1,0 @@
-Clean the following HTML product description. Requirements:
-1) Remove ALL third-party brand names and store names (car brands like BMW/Toyota/Honda/Mercedes/Porsche/Audi, platform names like Shopee/Lazada, any other brand/trademark names — English and Chinese both).
-2) Remove ALL content unrelated to the product itself: return policy, payment methods, shipping info, FAQ, store introduction, follow-store prompts, contact info, promotional campaigns, QR codes, any policy boilerplate text.
-3) Keep ONLY product information: product name, features, material, dimensions, specifications, color, quantity, use cases, applicable scenarios/models, installation instructions.
-4) Replace every <img ...> tag with a placeholder __IMG__ (so image positions are preserved).
-5) Output clean HTML with __IMG__ placeholders and <p>/<ul>/<li>/<br> text. No explanation, no prefix/suffix.
-
-Description: {text}

@@ -1,39 +1,28 @@
 [project]
-name = "crosspilot"
-dynamic = ["version"]
-description = "跨境电商 Listing 全自动清洗平台"
+name = "amazon-json-processor"
+version = "1.0.0"
+description = "Amazon JSON 采集表核心处理器"
 requires-python = ">=3.11"
 dependencies = [
-    "openpyxl>=3.1",
     "pillow>=10.0",
     "requests>=2.31",
-    "fastapi>=0.109",
-    "uvicorn[standard]>=0.27",
-    "python-multipart>=0.0.6",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.version]
-path = "crosspilot/version.py"
-
 [tool.hatch.build.targets.wheel]
-packages = ["crosspilot", "scripts", "web"]
+packages = ["amazon_processor"]
 
 [dependency-groups]
-dev = [
-    "httpx>=0.28",
-    "pyinstaller>=6.0",
-    "pytest>=8.0",
-]
+dev = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-norecursedirs = [".git", ".venv", "build", "data", "dist"]
+norecursedirs = [".git", ".runtime", "输出"]
 markers = [
     "network: tests that need API keys and internet access",
-    "slow: tests that take > 10 seconds",
+    "slow: tests that take more than 10 seconds",
 ]
 addopts = "-m 'not network'"
