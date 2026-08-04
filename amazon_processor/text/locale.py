@@ -11,6 +11,10 @@ from ..quality import split_keywords
 
 _SPACE_RE = re.compile(r"\s+")
 _BRAND_RE = compile_brand_pattern(COMPATIBILITY_BRANDS)
+_OEM_RE = re.compile(
+    r"\b(?:OEM|original|factory|genuine)\b|原厂|原装|正品",
+    re.IGNORECASE,
+)
 _DESCRIPTION_LABELS = {
     "en": {
         "Material": "Material",
@@ -141,13 +145,18 @@ def compatibility_format_is_valid(title: object, site: object) -> bool:
     )
 
 
-def sanitize_localized_subtitle(value: object) -> str:
+def sanitize_localized_subtitle(value: object, site: object = None) -> str:
     text = str(value or "").replace("\r", " ").replace("\n", ", ")
     text = _BRAND_RE.sub(" ", text)
     kept = []
+    english = bool(site and get_market(site).language_code == "en")
     for char in text:
         category = unicodedata.category(char)
-        if char in " ,-'" or category[0] in {"L", "N"}:
+        if english:
+            allowed = char in " ," or char.isascii() and char.isalnum()
+        else:
+            allowed = char in " ,-'" or category[0] in {"L", "N"}
+        if allowed:
             kept.append(char)
         else:
             kept.append(" ")
@@ -175,6 +184,7 @@ def _unicode_fingerprint(value: object) -> str:
 def _clean_localized_phrase(value: object, limit: int) -> str:
     text = str(value or "").replace("\r", " ").replace("\n", " ")
     text = _BRAND_RE.sub(" ", text)
+    text = _OEM_RE.sub(" ", text)
     kept = []
     for char in text:
         category = unicodedata.category(char)
@@ -255,12 +265,19 @@ def localization_violations(row: dict) -> list[str]:
         violations.append("subtitle_not_allowed")
     if len(subtitle) > 125:
         violations.append("subtitle_length")
+    if subtitle and sanitize_localized_subtitle(subtitle, market.code) != subtitle:
+        violations.append("subtitle_characters")
     if not description or len(description) > 500:
         violations.append("description_length")
     if len(bullets) != 5 or any(not item or len(item) > 200 for item in bullets):
         violations.append("bullets_shape")
     if len(keywords) != 10:
         violations.append("keywords_count")
+    if len(str(row.get("keywords") or "")) > 250:
+        violations.append("keywords_length")
+    non_title_copy = " ".join([subtitle, description, *bullets, *keywords])
+    if _BRAND_RE.search(non_title_copy) or _OEM_RE.search(non_title_copy):
+        violations.append("listing_brand_or_oem")
     aggregate = " ".join([title, subtitle, description, *bullets, *keywords])
     detected = _detected_language(aggregate)
     if (

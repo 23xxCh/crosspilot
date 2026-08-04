@@ -112,6 +112,22 @@ def test_language_validation_rejects_english_copy_for_germany() -> None:
     )
 
 
+def test_release_validation_rejects_long_keywords_special_subtitle_and_oem() -> None:
+    row = _localized_row("US")
+    row["subtitle"] = "Universal 4-12 inch fit"
+    row["bullets"][0] = "OEM construction for daily vehicle use"
+    row["keywords"] = ", ".join(
+        f"extended keyword phrase number {index}"
+        for index in range(10)
+    )
+
+    violations = localization_violations(row)
+
+    assert "subtitle_characters" in violations
+    assert "keywords_length" in violations
+    assert "listing_brand_or_oem" in violations
+
+
 def test_localization_cache_restores_only_valid_current_rows(tmp_path) -> None:
     cache = LocalizationCache(tmp_path / "localization.json")
     row = _localized_row()

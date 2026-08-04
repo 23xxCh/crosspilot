@@ -363,7 +363,8 @@ def _apply_candidate(row: dict, value: dict) -> dict:
         row.get("site") or "US",
     )
     candidate["subtitle"] = sanitize_localized_subtitle(
-        value.get("subtitle")
+        value.get("subtitle"),
+        row.get("site") or "US",
     )
     candidate["desc"] = _compact_localized_description(
         value.get("description")

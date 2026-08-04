@@ -224,7 +224,10 @@ def normalize_subtitle_for_row(row: dict) -> dict:
     elif not str(row.get("desc") or "").strip():
         row["subtitle"] = ""
     elif market.language_code != "en":
-        row["subtitle"] = sanitize_localized_subtitle(before)
+        row["subtitle"] = sanitize_localized_subtitle(
+            before,
+            row.get("site") or "US",
+        )
     else:
         row["subtitle"] = ""
         if before.strip():
