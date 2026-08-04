@@ -7,6 +7,9 @@ from unittest.mock import Mock
 from amazon_processor import delivery
 from amazon_processor.config.models import ModelRegistry
 from amazon_processor.config.prompts import PromptRegistry
+from amazon_processor.images.risk import (
+    normalize_main_text_assessment,
+)
 from amazon_processor.log import PipelineMetrics
 from amazon_processor.runtime import RunContext
 
@@ -39,7 +42,7 @@ def test_delivery_publishes_one_fixed_artifact_set(
     tmp_path,
     monkeypatch,
 ) -> None:
-    output_root = tmp_path / "输出"
+    output_root = tmp_path / "02_处理结果"
     runtime_root = tmp_path / ".runtime"
     monkeypatch.setattr(delivery, "OUTPUT_ROOT", output_root)
     monkeypatch.setattr(delivery, "RUNTIME_ROOT", runtime_root)
@@ -58,6 +61,7 @@ def test_delivery_publishes_one_fixed_artifact_set(
     context.data = [{
         "id": "p1",
         "title": "Generic Product",
+        "subtitle": "Useful material, simple installation",
         "desc": "Useful product description",
         "main_img": "https://img/main.jpg",
         "extra_imgs": [],
@@ -67,21 +71,30 @@ def test_delivery_publishes_one_fixed_artifact_set(
             "product, item, part, material, installation, use, "
             "accessory, hardware, kit, universal"
         ),
-        "_image_assessments": [{
-            "role": "main",
-            "url": "https://img/main.jpg",
-            "assessment": {"status": "safe"},
-        }],
+            "_image_assessments": [{
+                "role": "main",
+                "url": "https://img/main.jpg",
+                "assessment": {"status": "safe"},
+                "text_assessment": normalize_main_text_assessment({
+                    "status": "safe",
+                    "reasons": [],
+                    "placement": "none",
+                    "detected_text": [],
+                    "confidence": 1.0,
+                    "evidence": "No visible text.",
+                }),
+            }],
     }]
     context.runtime_metrics["image_safety_gate"] = {"reviewed": 1}
 
-    result = delivery.deliver(context, additional_problem_ids=[])
+    result = delivery.deliver(context, problem_product_ids=[])
 
     assert result.output_path == output_root / "最新" / delivery.REFILL_NAME
     payload = json.loads(result.output_path.read_text(encoding="utf-8"))
     assert tuple(payload) == (
         "商品id",
         "产品标题",
+        "副标题",
         "产品描述",
         "产品图片链接",
         "变种图片链接",
@@ -97,10 +110,66 @@ def test_delivery_publishes_one_fixed_artifact_set(
     assert result.review_data_path.is_file()
 
 
+def test_publish_replaces_files_when_latest_directory_is_open(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    output_root = tmp_path / "02_处理结果"
+    latest = output_root / "最新"
+    runtime_root = tmp_path / ".runtime"
+    archive = output_root / "归档"
+    latest.mkdir(parents=True)
+    (latest / "跨境电商自动化回填表.json").write_text(
+        "old",
+        encoding="utf-8",
+    )
+    staging = runtime_root / "staging" / "new"
+    staging.mkdir(parents=True)
+    (staging / "跨境电商自动化回填表.json").write_text(
+        "new",
+        encoding="utf-8",
+    )
+    (staging / "图片").mkdir()
+    (staging / "图片" / "one.jpg").write_bytes(b"image")
+    monkeypatch.setattr(delivery, "LATEST_DIR", latest)
+    monkeypatch.setattr(delivery, "ARCHIVE_DIR", archive)
+    monkeypatch.setattr(delivery, "RUNTIME_ROOT", runtime_root)
+    original_replace = delivery.os.replace
+
+    def locked_directory_replace(source, target):
+        if Path(source) == latest:
+            raise PermissionError("latest directory is open")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(delivery.os, "replace", locked_directory_replace)
+
+    delivery._publish(staging)
+
+    assert (latest / "跨境电商自动化回填表.json").read_text(
+        encoding="utf-8"
+    ) == "new"
+    assert (latest / "图片" / "one.jpg").read_bytes() == b"image"
+    assert not staging.exists()
+
+
 def test_prompt_and_model_edits_change_cache_signatures(tmp_path) -> None:
     prompt_path = tmp_path / "prompts" / "amazon" / "title_optimize.txt"
     prompt_path.parent.mkdir(parents=True)
     prompt_path.write_text("Optimize {title}", encoding="utf-8")
+    (prompt_path.parents[1] / "manifest.json").write_text(
+        json.dumps({
+            "version": 1,
+            "prompts": [{
+                "id": "amazon.title_optimize",
+                "label": "Title",
+                "category": "Amazon",
+                "path": "amazon/title_optimize.txt",
+                "variables": ["title"],
+                "used_by": "test",
+            }],
+        }),
+        encoding="utf-8",
+    )
     prompts = PromptRegistry(prompt_path.parents[1])
     before_prompt = prompts.signature("amazon.title_optimize")
     prompt_path.write_text("Optimize for traffic {title}", encoding="utf-8")

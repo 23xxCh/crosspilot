@@ -7,6 +7,7 @@ from .support import CongestionGate, CongestionPolicy
 from .deepseek import DeepSeekProvider
 from .support import (
     ProviderAuthError,
+    ProviderCircuitOpenError,
     ProviderError,
     ProviderQuotaError,
     ProviderRateLimitError,
@@ -34,6 +35,7 @@ __all__ = [
     "CongestionPolicy",
     "ProviderError",
     "ProviderAuthError",
+    "ProviderCircuitOpenError",
     "ProviderQuotaError",
     "ProviderRateLimitError",
     "ProviderResponseError",

@@ -43,7 +43,11 @@ class GPTImageProvider(ModelProvider):
         self.IMAGE_MODEL = str(image_model or self.IMAGE_MODEL).strip()
         prompts = get_prompt_registry()
         self.MAIN_PROMPT = prompts.get("images.main_product")
+        self.MAIN_REFERENCE_FREE_PROMPT = prompts.get(
+            "images.main_product_reference_free"
+        )
         self.VAR_PROMPT = prompts.get("images.variant")
+        self.LISTING_CONTEXT_PROMPT = prompts.get("images.listing_context")
         self._session = requests.Session()
         self._session.mount(
             "https://",
@@ -76,17 +80,19 @@ class GPTImageProvider(ModelProvider):
         is_variant: bool = False,
         context: str = "",
         route_offset: int = 0,
+        reference_free: bool = False,
     ) -> Optional[str]:
         del route_offset
-        prompt = self.VAR_PROMPT if is_variant else self.MAIN_PROMPT
-        context_text = str(context or "").strip()[:500]
+        prompt = (
+            self.MAIN_REFERENCE_FREE_PROMPT
+            if reference_free and not is_variant
+            else (self.VAR_PROMPT if is_variant else self.MAIN_PROMPT)
+        )
+        context_text = str(context or "").strip()[:1400]
         if context_text:
-            prompt += (
-                "\n\nLISTING CONTEXT: "
-                + context_text
-                + "\nThe named product is the sold item. Treat any vehicle, "
-                "wheel, fixture, or installation scene only as context; do "
-                "not invent it as part of the product."
+            prompt += "\n\n" + get_prompt_registry().render(
+                "images.listing_context",
+                context=context_text,
             )
         retries = max(1, int(retries or 1))
         last_error: ProviderError | None = None
@@ -98,7 +104,11 @@ class GPTImageProvider(ModelProvider):
                         "model": self.IMAGE_MODEL,
                         "prompt": prompt,
                         "size": size,
-                        "reference_images": [image_url],
+                        **(
+                            {}
+                            if reference_free
+                            else {"reference_images": [image_url]}
+                        ),
                         "n": 1,
                     },
                     timeout=90,

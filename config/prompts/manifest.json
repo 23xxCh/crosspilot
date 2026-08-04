@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "prompts": [
+    {
+      "id": "system.product_listing_optimizer",
+      "label": "商品文案系统指令",
+      "category": "系统",
+      "path": "system/product_listing_optimizer.txt",
+      "variables": [],
+      "used_by": "DeepSeek 文案请求"
+    },
+    {
+      "id": "amazon.title_optimize",
+      "label": "Amazon 标题优化",
+      "category": "Amazon 文案",
+      "path": "amazon/title_optimize.txt",
+      "variables": [
+        "title"
+      ],
+      "used_by": "标题优化"
+    },
+    {
+      "id": "amazon.description_clean",
+      "label": "产品描述清洗与分段",
+      "category": "Amazon 文案",
+      "path": "amazon/description_clean.txt",
+      "variables": [
+        "strict_instruction",
+        "title",
+        "description"
+      ],
+      "used_by": "描述清洗"
+    },
+    {
+      "id": "amazon.bullet_keywords",
+      "label": "副标题、Bullet 与关键词",
+      "category": "Amazon 文案",
+      "path": "amazon/bullet_keywords.txt",
+      "variables": [
+        "title",
+        "description"
+      ],
+      "used_by": "副标题、Bullet 与关键词生成"
+    },
+    {
+      "id": "review.translation",
+      "label": "终审包中文翻译",
+      "category": "终审",
+      "path": "review/translation.txt",
+      "variables": [
+        "source_json"
+      ],
+      "used_by": "终审包中文文案"
+    },
+    {
+      "id": "images.risk_assessment",
+      "label": "图片风险初审",
+      "category": "图片安全",
+      "path": "images/risk_assessment.txt",
+      "variables": [],
+      "used_by": "结构化图片安全门"
+    },
+    {
+      "id": "images.risk_assessment_batch",
+      "label": "图片风险批量初审",
+      "category": "图片安全",
+      "path": "images/risk_assessment_batch.txt",
+      "variables": [],
+      "used_by": "Agnes 多图结构化图片安全门"
+    },
+    {
+      "id": "images.risk_confirmation",
+      "label": "图片高危二次确认",
+      "category": "图片安全",
+      "path": "images/risk_confirmation.txt",
+      "variables": [],
+      "used_by": "结构化图片安全门"
+    },
+    {
+      "id": "images.main_text_free_review",
+      "label": "主图零文字检查",
+      "category": "图片安全",
+      "path": "images/main_text_free_review.txt",
+      "variables": [],
+      "used_by": "主图独立零文字审查；任意文字、数字或伪文字触发局部编辑"
+    },
+    {
+      "id": "images.main_text_free_review_batch",
+      "label": "主图零文字批量检查",
+      "category": "图片安全",
+      "path": "images/main_text_free_review_batch.txt",
+      "variables": [],
+      "used_by": "Agnes 多图主图零文字审查"
+    },
+    {
+      "id": "images.review",
+      "label": "图片兼容布尔复审",
+      "category": "图片安全",
+      "path": "images/review.txt",
+      "variables": [],
+      "used_by": "旧布尔审图兼容接口"
+    },
+    {
+      "id": "images.person_removal",
+      "label": "人物移除指令",
+      "category": "图片生成",
+      "path": "images/person_removal.txt",
+      "variables": [],
+      "used_by": "人物风险修复"
+    },
+    {
+      "id": "images.main_product",
+      "label": "主图局部编辑",
+      "category": "图片生成",
+      "path": "images/main_product.txt",
+      "variables": [],
+      "used_by": "Agnes 与 GPT Image 主图局部去除全部文字与标识"
+    },
+    {
+      "id": "images.main_product_reference_free",
+      "label": "主图无参考重建",
+      "category": "图片生成",
+      "path": "images/main_product_reference_free.txt",
+      "variables": [],
+      "used_by": "主图难例的纯商品重建"
+    },
+    {
+      "id": "images.variant",
+      "label": "变种/附图局部编辑",
+      "category": "图片生成",
+      "path": "images/variant.txt",
+      "variables": [],
+      "used_by": "Agnes 与 GPT Image 变种图和附图去标与图中文字翻译"
+    },
+    {
+      "id": "images.listing_context",
+      "label": "生图商品上下文",
+      "category": "图片生成",
+      "path": "images/listing_context.txt",
+      "variables": [
+        "context"
+      ],
+      "used_by": "Agnes 与 GPT Image 生图请求"
+    }
+  ]
+}

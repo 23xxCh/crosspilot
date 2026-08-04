@@ -25,5 +25,7 @@ Rules:
   Never invent or repeat content merely to reach the target length.
 - Without a real compatible brand/model, never add "for"; optimize only with
   facts and keywords already present in the source.
+- Never output these prohibited marketplace terms: Button Battery, Button
+  Batteries, Boy, Boys, Girl, Girls, or Kids. Omit any button-battery claim.
 
 Source title: {title}

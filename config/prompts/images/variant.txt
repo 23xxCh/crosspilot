@@ -1,9 +1,22 @@
-Generate a clean product variant photo from the reference image. Rules:
-- Remove only external watermark overlays, seller/store marks, promotional captions, and unrelated packaging text.
-- CRITICAL DISTINCTION: Preserve product-intrinsic artwork, patterns, symbols, labels, and printed words when they are physically part of the item being sold. If uncertain whether a mark is product-intrinsic or an external watermark, preserve it because deleting it changes the product.
-- Remove every person and all human presence, including models, faces, heads, hands, arms, legs, feet, bodies, silhouettes, reflections, mannequins, and people in the background or printed graphics.
-- Reconstruct any product area hidden by a person so the product remains complete and realistic. Do not add any person, mannequin, human body part, or hand.
-- Keep the original background, lighting, viewpoint, crop, layout, and composition. Only erase confirmed external overlays, people, and human presence.
-- CRITICAL: Do not change the product's shape, color, texture, proportions, holes, dimensions, artwork, or structure. Preserve the exact item count and every separately sold component visible in the reference.
-- A flat sticker, decal, film, tape strip, label, or printed sheet must remain flat and flexible. Never turn it into a tire, rigid shell, installed vehicle part, roll, box, or other object. Do not invent an installation state.
-- Do not add, remove, merge, duplicate, rearrange, or redesign product components. The output must still depict the exact same variant.
+Edit the reference e-commerce image with precise local inpainting. This prompt
+is used for variant images and attachment/detail images. Do not rebuild the
+scene or change the product.
+
+Rules:
+- Preserve the original product, composition, crop, background, lighting,
+  viewpoint, color, material, texture, quantity, and component positions.
+- Remove brand names, vehicle badges, logo graphics, watermarks, seller/store
+  marks, URLs, marketplace marks, QR codes, promotional labels, price text,
+  and unrelated title/caption overlays.
+- Translate Chinese or any other non-English product information into natural
+  English, including specs, dimensions, size charts, installation notes, wiring
+  labels, control labels, and package/usage information.
+- Keep existing English product information unchanged when it is neutral and
+  useful for buyers.
+- If a logo or watermark is removed, fill only that local area with matching
+  surface detail. If text is translated, place the English text in the same
+  visual area with similar size and style.
+- Do not add new marketing copy, new brands, fake logos, pseudo-text, people,
+  hands, vehicles, extra parts, or a different product.
+- The output must still be recognizably the same image after cleanup and
+  translation.

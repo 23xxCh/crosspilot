@@ -23,6 +23,7 @@ from ..quality import (
     normalize_keywords_for_row as _normalize_keywords_for_row,
     plain_text as _plain_text,
 )
+from .subtitles import normalize_subtitles_for_rows
 
 
 QuotaExhaustedError = ProviderQuotaError
@@ -101,10 +102,15 @@ def generate_bullets_keywords(
     provider_getter=None,
 ):
     """Generate, validate, and rule-fill five bullets and ten keywords."""
+    for row in data:
+        if not str(row.get("desc") or "").strip():
+            row["bullets"] = [""] * 5
+            row["keywords"] = ""
+            row["subtitle"] = ""
     items = [
         (index, row)
         for index, row in enumerate(data)
-        if row["title"]
+        if row["title"] and str(row.get("desc") or "").strip()
     ]
     print(
         f"生成 Bullet Point + 关键词 {len(items)} 条"
@@ -132,6 +138,7 @@ def generate_bullets_keywords(
                         index,
                         parsed.get("bullets", [""] * 5)[:5],
                         parsed.get("keywords", ""),
+                        parsed.get("subtitle", ""),
                     )
         except QuotaExhaustedError:
             raise
@@ -141,7 +148,7 @@ def generate_bullets_keywords(
                 row=index,
                 error=str(exc),
             )
-        return index, [""] * 5, ""
+        return index, [""] * 5, "", ""
 
     done = 0
     with ThreadPoolExecutor(
@@ -153,7 +160,7 @@ def generate_bullets_keywords(
         }
         for future in as_completed(futures):
             try:
-                index, bullets, keywords = future.result()
+                index, bullets, keywords, subtitle = future.result()
             except QuotaExhaustedError:
                 for pending in futures:
                     pending.cancel()
@@ -164,6 +171,7 @@ def generate_bullets_keywords(
             before_keywords = data[index].get("keywords", "")
             data[index]["bullets"] = bullets
             data[index]["keywords"] = keywords
+            data[index]["subtitle"] = subtitle
             _add_audit(
                 data[index],
                 "Bullet+关键词",
@@ -198,6 +206,7 @@ def generate_bullets_keywords(
         for index, row in enumerate(data)
         if (
             row["title"]
+            and str(row.get("desc") or "").strip()
             and (
                 not row.get("bullets")
                 or not any(row["bullets"])
@@ -219,7 +228,7 @@ def generate_bullets_keywords(
             }
             for future in as_completed(futures):
                 try:
-                    index, bullets, keywords = future.result()
+                    index, bullets, keywords, subtitle = future.result()
                 except QuotaExhaustedError:
                     for pending in futures:
                         pending.cancel()
@@ -233,6 +242,7 @@ def generate_bullets_keywords(
                 )
                 data[index]["bullets"] = bullets
                 data[index]["keywords"] = keywords
+                data[index]["subtitle"] = subtitle
                 _add_audit(
                     data[index],
                     "Bullet+关键词",
@@ -271,10 +281,17 @@ def generate_bullets_keywords(
                     )
 
     for row in data:
+        if not str(row.get("desc") or "").strip():
+            row["bullets"] = [""] * 5
+            row["keywords"] = ""
+            row["subtitle"] = ""
+            continue
         if "bullets" not in row:
             row["bullets"] = [""] * 5
         if "keywords" not in row:
             row["keywords"] = ""
+        if "subtitle" not in row:
+            row["subtitle"] = ""
         before_bullets = list(row.get("bullets") or [])
         before_keywords = row.get("keywords", "")
         _normalize_bullets_for_row(row)
@@ -315,7 +332,11 @@ def generate_bullets_keywords(
             for bullet in bullets[:5]
             if str(bullet).strip()
         ]
-        if len(non_empty) < 5 and row.get("title"):
+        if (
+            len(non_empty) < 5
+            and row.get("title")
+            and str(row.get("desc") or "").strip()
+        ):
             before_bullets = list(row.get("bullets") or [])
             before_keywords = row.get("keywords", "")
             _add_quality_issue(
@@ -409,11 +430,13 @@ def generate_bullets_keywords(
             f"  规则补全: {filled} 行 Bullet/关键词",
             flush=True,
         )
+    normalize_subtitles_for_rows(data)
     incomplete = [
         index + 1
         for index, row in enumerate(data)
         if (
             row.get("title")
+            and str(row.get("desc") or "").strip()
             and (
                 len([
                     bullet
@@ -464,10 +487,12 @@ def valid_bullet_payload(items):
         return False
     bullets = items.get("bullets")
     keywords = items.get("keywords")
+    subtitle = items.get("subtitle", "")
     return (
         isinstance(bullets, list)
         and all(isinstance(item, str) for item in bullets)
         and isinstance(keywords, str)
+        and isinstance(subtitle, str)
     )
 
 

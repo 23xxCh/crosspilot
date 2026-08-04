@@ -10,7 +10,9 @@ from typing import Any
 from .risk import (
     IMAGE_RISK_POLICY_VERSION,
     IMAGE_RISK_SCHEMA_VERSION,
+    MAIN_TEXT_POLICY_VERSION,
     normalize_image_assessment,
+    normalize_main_text_assessment,
 )
 from ..config.prompts import build_runtime_signature
 from ..log import log as _log
@@ -20,19 +22,33 @@ from ..policy import IMAGE_POLICY_VERSION
 _CACHE_LOCK = threading.Lock()
 
 
-def current_cache_versions() -> tuple[str, str]:
+def current_cache_versions() -> tuple[str, str, str]:
     """Return signatures that invalidate stale review and generation data."""
+    from ..config.env import get
+
+    generated_review_mode = get("GENERATED_IMAGE_REVIEW_MODE", "strict")
     review_version = build_runtime_signature(
         f"{IMAGE_POLICY_VERSION}:{IMAGE_RISK_POLICY_VERSION}",
         "images.risk_assessment",
+        "images.risk_assessment_batch",
         "images.risk_confirmation",
     )
-    generation_version = build_runtime_signature(
-        f"{IMAGE_POLICY_VERSION}:{IMAGE_RISK_POLICY_VERSION}",
-        "images.main_product",
-        "images.variant",
+    main_text_version = build_runtime_signature(
+        f"{IMAGE_POLICY_VERSION}:{MAIN_TEXT_POLICY_VERSION}",
+        "images.main_text_free_review",
+        "images.main_text_free_review_batch",
     )
-    return review_version, generation_version
+    generation_version = build_runtime_signature(
+        (
+            f"{IMAGE_POLICY_VERSION}:{IMAGE_RISK_POLICY_VERSION}:"
+            f"generated_review={generated_review_mode}"
+        ),
+        "images.main_product",
+        "images.main_product_reference_free",
+        "images.variant",
+        "images.listing_context",
+    )
+    return review_version, main_text_version, generation_version
 
 
 def is_current_assessment(value: object) -> bool:
@@ -44,10 +60,20 @@ def is_current_assessment(value: object) -> bool:
         and normalize_image_assessment(value) is not None
     )
 
+def is_current_main_text_assessment(value: object) -> bool:
+    """Return whether a cached main-image text result is current."""
+    return bool(
+        isinstance(value, dict)
+        and value.get("schema_version") == IMAGE_RISK_SCHEMA_VERSION
+        and value.get("policy_version") == MAIN_TEXT_POLICY_VERSION
+        and normalize_main_text_assessment(value) is not None
+    )
+
 
 def load_cache(
     cache_path: str | None,
     review_version: str,
+    main_text_version: str,
     generation_version: str,
 ) -> dict[str, Any]:
     """Load compatible cache sections and invalidate stale policy results."""
@@ -65,22 +91,36 @@ def load_cache(
             str(url): value
             for url, value in (raw.get("risk_assessments") or {}).items()
             if is_current_assessment(value)
+            and str(value.get("status") or "") != "unknown"
         }
         confirmations = {
             str(url): value
             for url, value in (raw.get("risk_confirmations") or {}).items()
             if is_current_assessment(value)
+            and str(value.get("status") or "") != "unknown"
         }
     elif raw:
         print("图片风险策略已更新，旧 YES/NO 图审缓存已强制失效", flush=True)
+    main_text_assessments = {}
+    if raw.get("main_text_prompt_version") == main_text_version:
+        main_text_assessments = {
+            str(url): value
+            for url, value in (
+                raw.get("main_text_assessments") or {}
+            ).items()
+            if is_current_main_text_assessment(value)
+            and str(value.get("status") or "") != "unknown"
+        }
     generation_is_current = raw.get("gen_prompt_version") == generation_version
     return {
         "risk_prompt_version": review_version,
+        "main_text_prompt_version": main_text_version,
         "gen_prompt_version": generation_version,
         "image_policy_version": IMAGE_POLICY_VERSION,
         "image_risk_policy_version": IMAGE_RISK_POLICY_VERSION,
         "risk_assessments": assessments,
         "risk_confirmations": confirmations,
+        "main_text_assessments": main_text_assessments,
         "gen_results": (
             dict(raw.get("gen_results") or {}) if generation_is_current else {}
         ),
@@ -102,11 +142,17 @@ def save_cache(cache_path: str | None, cache: dict[str, Any]) -> None:
     with _CACHE_LOCK:
         snapshot = {
             "risk_prompt_version": cache["risk_prompt_version"],
+            "main_text_prompt_version": cache[
+                "main_text_prompt_version"
+            ],
             "gen_prompt_version": cache["gen_prompt_version"],
             "image_policy_version": cache["image_policy_version"],
             "image_risk_policy_version": cache["image_risk_policy_version"],
             "risk_assessments": dict(cache["risk_assessments"]),
             "risk_confirmations": dict(cache["risk_confirmations"]),
+            "main_text_assessments": dict(
+                cache["main_text_assessments"]
+            ),
             "gen_results": dict(cache["gen_results"]),
             "gen_meta": dict(cache["gen_meta"]),
             "gen_failures": dict(cache["gen_failures"]),
@@ -189,6 +235,7 @@ def manual_safe_assessment(override: dict) -> dict[str, Any]:
 __all__ = [
     "current_cache_versions",
     "is_current_assessment",
+    "is_current_main_text_assessment",
     "load_cache",
     "load_manual_overrides",
     "manual_safe_assessment",

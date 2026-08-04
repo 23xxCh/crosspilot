@@ -1,6 +1,7 @@
 """Agnes text, vision, and image provider."""
 from __future__ import annotations
 
+import base64
 import json
 import re
 import random
@@ -13,7 +14,12 @@ from requests.adapters import HTTPAdapter
 
 from ..config.models import get_model_registry
 from ..config.prompts import get_prompt_registry
-from ..images.risk import parse_image_assessment_response
+from ..images.risk import (
+    parse_image_assessment_batch_response,
+    parse_image_assessment_response,
+    parse_main_text_assessment_batch_response,
+    parse_main_text_assessment_response,
+)
 
 from .support import ModelProvider, CongestionGate, CongestionPolicy
 from .support import (
@@ -43,11 +49,14 @@ class AgnesProvider(ModelProvider):
     _image_lock = threading.Lock()
     _image_last = [0.0]
     _image_interval = 60.0 / 100
+    IMAGE_REQUEST_TIMEOUT_S = 90
+    REFERENCE_FREE_IMAGE_REQUEST_TIMEOUT_S = 180
 
     _PROMPTS = get_prompt_registry()
     REVIEW_PROMPT = _PROMPTS.get("images.review")
     RISK_ASSESSMENT_PROMPT = _PROMPTS.get("images.risk_assessment")
     RISK_CONFIRMATION_PROMPT = _PROMPTS.get("images.risk_confirmation")
+    MAIN_TEXT_FREE_PROMPT = _PROMPTS.get("images.main_text_free_review")
     MAIN_IMAGE_PROMPT = _PROMPTS.get("images.main_product")
     VARIANT_IMAGE_PROMPT = _PROMPTS.get("images.variant")
 
@@ -78,11 +87,24 @@ class AgnesProvider(ModelProvider):
         self.RISK_ASSESSMENT_PROMPT = prompts.get(
             "images.risk_assessment"
         )
+        self.RISK_ASSESSMENT_BATCH_PROMPT = prompts.get(
+            "images.risk_assessment_batch"
+        )
         self.RISK_CONFIRMATION_PROMPT = prompts.get(
             "images.risk_confirmation"
         )
+        self.MAIN_TEXT_FREE_PROMPT = prompts.get(
+            "images.main_text_free_review"
+        )
+        self.MAIN_TEXT_FREE_BATCH_PROMPT = prompts.get(
+            "images.main_text_free_review_batch"
+        )
         self.MAIN_IMAGE_PROMPT = prompts.get("images.main_product")
+        self.MAIN_REFERENCE_FREE_PROMPT = prompts.get(
+            "images.main_product_reference_free"
+        )
         self.VARIANT_IMAGE_PROMPT = prompts.get("images.variant")
+        self.LISTING_CONTEXT_PROMPT = prompts.get("images.listing_context")
         self._congestion_policy = (
             congestion_policy or CongestionPolicy()
         )
@@ -306,15 +328,16 @@ class AgnesProvider(ModelProvider):
             raise last_error
         return None
 
-    def _call_vision_parsed(
+    def _call_vision_content_parsed(
         self,
-        image_url: str,
+        content: list[dict],
         *,
         prompt: str,
         parser,
         invalid_message: str,
         max_tokens: int,
         retries: int,
+        timeout_s: float = 60,
     ):
         retries = max(1, int(retries or 1))
         last_error: ProviderError | None = None
@@ -330,21 +353,12 @@ class AgnesProvider(ModelProvider):
                         "model": self.VISION_MODEL,
                         "messages": [{
                             "role": "user",
-                            "content": [
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": image_url},
-                                },
-                                {
-                                    "type": "text",
-                                    "text": prompt,
-                                },
-                            ],
+                            "content": content,
                         }],
                         "temperature": 0,
                         "max_tokens": max_tokens,
                     },
-                    timeout=60,
+                    timeout=max(5.0, float(timeout_s)),
                 )
             except (requests.Timeout, requests.RequestException) as exc:
                 last_error = self._request_error(
@@ -364,15 +378,25 @@ class AgnesProvider(ModelProvider):
                 if response.ok:
                     self._record_congestion_success("vision")
                     try:
-                        content = (
+                        message = (
                             response.json()
                             .get("choices", [{}])[0]
                             .get("message", {})
-                            .get("content", "")
+                        )
+                        contents = (
+                            message.get("content", ""),
+                            message.get("reasoning_content", ""),
                         )
                     except (AttributeError, IndexError, TypeError, ValueError):
-                        content = ""
-                    parsed = parser(content)
+                        contents = ()
+                    parsed = next(
+                        (
+                            parsed
+                            for content in contents
+                            if (parsed := parser(content)) is not None
+                        ),
+                        None,
+                    )
                     if parsed is not None:
                         self._record_attempt(
                             "vision",
@@ -430,6 +454,75 @@ class AgnesProvider(ModelProvider):
         if last_error is not None:
             raise last_error
         return None
+
+    def _call_vision_parsed(
+        self,
+        image_url: str,
+        *,
+        prompt: str,
+        parser,
+        invalid_message: str,
+        max_tokens: int,
+        retries: int,
+    ):
+        return self._call_vision_content_parsed(
+            [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_url},
+                },
+                {"type": "text", "text": prompt},
+            ],
+            prompt=prompt,
+            parser=parser,
+            invalid_message=invalid_message,
+            max_tokens=max_tokens,
+            retries=retries,
+            timeout_s=60,
+        )
+
+    @staticmethod
+    def _download_image_data_url(
+        image_url: str,
+        *,
+        timeout_s: float = 20,
+        max_bytes: int = 10 * 1024 * 1024,
+    ) -> str:
+        try:
+            response = requests.get(
+                image_url,
+                timeout=max(1.0, float(timeout_s)),
+                headers={"User-Agent": "AmazonProcessor/1.0"},
+            )
+            response.raise_for_status()
+        except requests.Timeout as exc:
+            raise ProviderTimeoutError(
+                "源图片下载超时",
+                provider="agnes",
+                operation="vision",
+            ) from exc
+        except requests.RequestException as exc:
+            raise ProviderUnavailableError(
+                "源图片下载失败",
+                provider="agnes",
+                operation="vision",
+            ) from exc
+        content = bytes(response.content or b"")
+        content_type = str(
+            response.headers.get("Content-Type") or "image/jpeg"
+        ).split(";", 1)[0].strip().lower()
+        if (
+            not content
+            or len(content) > max_bytes
+            or not content_type.startswith("image/")
+        ):
+            raise ProviderResponseError(
+                "源图片内容无效或过大",
+                provider="agnes",
+                operation="vision",
+            )
+        encoded = base64.b64encode(content).decode("ascii")
+        return f"data:{content_type};base64,{encoded}"
     def call_vision(
         self,
         image_url: str,
@@ -460,21 +553,81 @@ class AgnesProvider(ModelProvider):
         image_url: str,
         *,
         confirmation: bool = False,
+        policy: str = "general",
         retries: int = 3,
     ) -> Optional[dict]:
-        prompt = (
-            self.RISK_CONFIRMATION_PROMPT
-            if confirmation
-            else self.RISK_ASSESSMENT_PROMPT
-        )
+        if policy == "main_text_free":
+            prompt = self.MAIN_TEXT_FREE_PROMPT
+            parser = parse_main_text_assessment_response
+            invalid_message = "Agnes 图片文字兼容审查响应不是结构化 JSON"
+        else:
+            prompt = (
+                self.RISK_CONFIRMATION_PROMPT
+                if confirmation
+                else self.RISK_ASSESSMENT_PROMPT
+            )
+            parser = parse_image_assessment_response
+            invalid_message = "Agnes 图审响应不是结构化风险 JSON"
         return self._call_vision_parsed(
             image_url,
             prompt=prompt,
-            parser=parse_image_assessment_response,
-            invalid_message="Agnes 图审响应不是结构化风险 JSON",
+            parser=parser,
+            invalid_message=invalid_message,
             max_tokens=400,
             retries=retries,
         )
+
+    def assess_images(
+        self,
+        image_urls: list[str],
+        *,
+        policy: str = "general",
+        retries: int = 1,
+    ) -> list[dict]:
+        """Review a small image batch using locally downloaded data URLs."""
+        urls = [str(url or "").strip() for url in image_urls]
+        if not urls or any(not url for url in urls):
+            raise ProviderResponseError(
+                "批量图审缺少图片 URL",
+                provider="agnes",
+                operation="vision",
+            )
+        content: list[dict] = []
+        for index, image_url in enumerate(urls, start=1):
+            content.extend([
+                {"type": "text", "text": f"IMAGE_INDEX {index}"},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": self._download_image_data_url(image_url),
+                    },
+                },
+            ])
+        if policy == "main_text_free":
+            prompt = self.MAIN_TEXT_FREE_BATCH_PROMPT
+            parser = lambda raw: parse_main_text_assessment_batch_response(
+                raw,
+                expected_count=len(urls),
+            )
+            invalid_message = "Agnes 批量主图文字审查响应无效"
+        else:
+            prompt = self.RISK_ASSESSMENT_BATCH_PROMPT
+            parser = lambda raw: parse_image_assessment_batch_response(
+                raw,
+                expected_count=len(urls),
+            )
+            invalid_message = "Agnes 批量图审响应无效"
+        content.append({"type": "text", "text": prompt})
+        result = self._call_vision_content_parsed(
+            content,
+            prompt=prompt,
+            parser=parser,
+            invalid_message=invalid_message,
+            max_tokens=min(2000, 400 * len(urls)),
+            retries=retries,
+            timeout_s=30,
+        )
+        return list(result or [])
 
     def call_image_gen(
         self,
@@ -484,21 +637,23 @@ class AgnesProvider(ModelProvider):
         is_variant: bool = False,
         context: str = "",
         route_offset: int = 0,
+        reference_free: bool = False,
     ) -> Optional[str]:
         del route_offset
         prompt = (
+            self.MAIN_REFERENCE_FREE_PROMPT
+            if reference_free and not is_variant
+            else (
             self.VARIANT_IMAGE_PROMPT
             if is_variant
             else self.MAIN_IMAGE_PROMPT
+            )
         )
-        context_text = str(context or "").strip()[:500]
+        context_text = str(context or "").strip()[:1400]
         if context_text:
-            prompt += (
-                "\n\nLISTING CONTEXT: "
-                + context_text
-                + "\nThe named product is the sold item. Treat any vehicle, "
-                "wheel, fixture, or installation scene only as context; do "
-                "not invent it as part of the product."
+            prompt += "\n\n" + get_prompt_registry().render(
+                "images.listing_context",
+                context=context_text,
             )
         retries = max(1, int(retries or 1))
         last_error: ProviderError | None = None
@@ -513,12 +668,20 @@ class AgnesProvider(ModelProvider):
                         "model": self.IMAGE_MODEL,
                         "prompt": prompt,
                         "size": size,
-                        "extra_body": {
-                            "image": [image_url],
-                            "response_format": "url",
-                        },
+                        "extra_body": (
+                            {"response_format": "url"}
+                            if reference_free
+                            else {
+                                "image": [image_url],
+                                "response_format": "url",
+                            }
+                        ),
                     },
-                    timeout=300,
+                    timeout=(
+                        self.REFERENCE_FREE_IMAGE_REQUEST_TIMEOUT_S
+                        if reference_free
+                        else self.IMAGE_REQUEST_TIMEOUT_S
+                    ),
                 )
             except (requests.Timeout, requests.RequestException) as exc:
                 last_error = self._request_error(

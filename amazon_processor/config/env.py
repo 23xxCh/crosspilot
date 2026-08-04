@@ -7,30 +7,15 @@ from pathlib import Path
 import threading
 from typing import Any
 
+from .credentials import CredentialStore
 from .models import get_model_registry, reload_model_registry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_PATH = PROJECT_ROOT / ".env"
 SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.json"
-SECRET_KEYS = ("DEEPSEEK_KEY", "AGNES_KEY", "GPT_IMAGE_KEY")
 _cache: dict[str, str] | None = None
 _lock = threading.Lock()
-
-
-def _read_env(path: Path = ENV_PATH) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not path.is_file():
-        return values
-    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if key in SECRET_KEYS:
-            values[key] = value.strip().strip('"').strip("'")
-    return values
 
 
 def _read_runtime() -> dict[str, str]:
@@ -59,6 +44,7 @@ def _read_runtime() -> dict[str, str]:
         "image_regeneration_routes": (
             "IMAGE_SAFETY_REGEN_LIMIT"
         ),
+        "generated_image_review_mode": "GENERATED_IMAGE_REVIEW_MODE",
         "adaptive_failure_rate": "ADAPTIVE_FAILURE_RATE",
         "adaptive_recovery_batches": "ADAPTIVE_RECOVERY_BATCHES",
         "circuit_failure_threshold": "CIRCUIT_FAILURE_THRESHOLD",
@@ -75,7 +61,8 @@ def _read_runtime() -> dict[str, str]:
         "agnes_503_backoff_max_s": 8,
         "agnes_503_circuit_threshold": 3,
         "agnes_503_circuit_cooldown_s": 120,
-        "image_regeneration_routes": 2,
+        "image_regeneration_routes": 3,
+        "generated_image_review_mode": "strict",
         "adaptive_failure_rate": 0.25,
         "adaptive_recovery_batches": 3,
         "circuit_failure_threshold": 8,
@@ -94,12 +81,11 @@ def load_config() -> dict[str, str]:
         if _cache is not None:
             return dict(_cache)
         registry = get_model_registry()
-        values = {
-            key: os.environ.get(key) or value
-            for key, value in _read_env().items()
-        }
-        for key in SECRET_KEYS:
-            values.setdefault(key, os.environ.get(key, ""))
+        values = CredentialStore(
+            registry,
+            env_path=ENV_PATH,
+            environ=os.environ,
+        ).values_by_env()
         values.update(registry.as_config())
         values.update(_read_runtime())
         values["MODEL_PROFILE"] = registry.profile_name

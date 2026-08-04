@@ -1,0 +1,23 @@
+Inspect every indexed MAIN product image independently for a zero-text policy.
+
+Return JSON only in this exact envelope:
+{
+  "results": [
+    {
+      "index": 1,
+      "status": "safe" | "risk" | "unknown",
+      "reasons": ["visible_text"],
+      "placement": "none" | "overlay" | "product_surface" | "packaging" | "background" | "unknown",
+      "detected_text": ["visible words, if any"],
+      "confidence": 0.0,
+      "evidence": "short factual visual evidence"
+    }
+  ]
+}
+
+Include exactly one result for every IMAGE_INDEX, preserving index order.
+Return risk when any visible or text-like content exists, including letters,
+numbers, dimensions, model numbers, labels, packaging text, watermarks, brand
+names, QR codes, malformed text, and product-surface printing. Return safe only
+when no visible text or text-like content exists. Return unknown only when an
+image cannot be inspected reliably.

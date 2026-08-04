@@ -4,6 +4,8 @@ from __future__ import annotations
 import threading
 from typing import Any, Optional
 
+from ..config.credentials import CredentialStore
+from ..config.models import get_model_registry
 from ..config.prompts import reload_prompt_registry
 
 from .composite import CompositeProvider
@@ -11,34 +13,24 @@ from .composite import CompositeProvider
 
 def load_provider_config() -> dict[str, Any]:
     """Map unified settings to the provider construction shape."""
-    config: dict[str, Any] = {}
+    registry = get_model_registry()
+    credentials = CredentialStore(registry)
+    config: dict[str, Any] = {
+        "routes": {
+            operation: [
+                {
+                    **target.as_dict(),
+                    "api_key": credentials.value(target.credential),
+                }
+                for target in registry.routes(operation)
+            ]
+            for operation in ("text", "vision", "image")
+        }
+    }
     from ..config.env import load_config
 
     cfg = load_config()
     mapping = {
-            "DEEPSEEK_KEY": "deepseek_key",
-            "AGNES_KEY": "agnes_key",
-            "GPT_IMAGE_KEY": "gpt_image_key",
-            "TEXT_PROVIDER": "text_provider",
-            "VISION_PROVIDER": "vision_provider",
-            "IMAGE_PROVIDER": "image_gen_provider",
-            "DEEPSEEK_BASE_URL": "deepseek_base_url",
-            "DEEPSEEK_TEXT_MODEL": "deepseek_text_model",
-            "DEEPSEEK_TEXT_FALLBACK_MODEL": (
-                "deepseek_text_fallback_model"
-            ),
-            "AGNES_BASE_URL": "agnes_base_url",
-            "AGNES_TEXT_BASE_URL": "agnes_text_base_url",
-            "AGNES_TEXT_MODEL": "agnes_text_model",
-            "AGNES_VISION_BASE_URL": "agnes_vision_base_url",
-            "AGNES_VISION_MODEL": "agnes_vision_model",
-            "AGNES_IMAGE_BASE_URL": "agnes_image_base_url",
-            "AGNES_IMAGE_MODEL": "agnes_image_model",
-            "AGNES_IMAGE_FALLBACK_MODEL": (
-                "agnes_image_fallback_model"
-            ),
-            "GPT_IMAGE_BASE_URL": "gpt_image_base_url",
-            "GPT_IMAGE_MODEL": "gpt_image_model",
             "AGNES_503_RETRY_LIMIT": "agnes_503_retry_limit",
             "AGNES_503_BACKOFF_MIN_S": (
                 "agnes_503_backoff_min_s"
@@ -78,13 +70,17 @@ def get_provider() -> CompositeProvider:
     global _provider
     with _provider_lock:
         if _provider is None:
-            if (
-                not _KEYS.get("deepseek_key")
-                and not _KEYS.get("agnes_key")
-            ):
+            missing = [
+                f"{operation}:{route.get('credential')}"
+                for operation, routes in (_KEYS.get("routes") or {}).items()
+                for route in routes
+                if not route.get("api_key")
+            ]
+            if missing:
                 raise ValueError(
-                    "未配置 API 密钥。请复制 .env.example 为 .env，填写 "
-                    "DEEPSEEK_KEY / AGNES_KEY。"
+                    "以下模型线路未配置 API 密钥: "
+                    + ", ".join(missing)
+                    + "。请双击 03_配置管理.bat。"
                 )
             _provider = CompositeProvider(_KEYS)
         return _provider

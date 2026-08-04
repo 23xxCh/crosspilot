@@ -1,0 +1,986 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Amazon 处理器 · 配置管理中心</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18201d;
+      --muted: #67716d;
+      --line: #d9dfdc;
+      --paper: #f5f7f5;
+      --panel: #ffffff;
+      --nav: #16211d;
+      --nav-muted: #9dafaa;
+      --accent: #d96d32;
+      --accent-dark: #ad4f20;
+      --safe: #217a55;
+      --warn: #a76216;
+      --danger: #b33b33;
+      --focus: #156f9b;
+      --radius: 8px;
+      font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-size: 14px;
+    }
+    button, input, select, textarea { font: inherit; }
+    button, input, select, textarea {
+      border: 1px solid #cbd3cf;
+      border-radius: 6px;
+    }
+    button:focus-visible, input:focus-visible, select:focus-visible,
+    textarea:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--focus) 26%, transparent);
+      outline-offset: 1px;
+      border-color: var(--focus);
+    }
+    button {
+      min-height: 36px;
+      padding: 7px 13px;
+      background: #fff;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    button:hover { border-color: #87938e; }
+    button:disabled { opacity: .48; cursor: not-allowed; }
+    button.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+    button.primary:hover { background: var(--accent-dark); }
+    button.danger { color: var(--danger); border-color: #e2b5b2; }
+    input, select, textarea {
+      width: 100%;
+      min-height: 38px;
+      padding: 8px 10px;
+      background: #fff;
+      color: var(--ink);
+    }
+    textarea {
+      resize: vertical;
+      line-height: 1.55;
+      font-family: Consolas, "Microsoft YaHei UI", monospace;
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 238px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px 16px 16px;
+      background: var(--nav);
+      color: #fff;
+    }
+    .brand {
+      padding: 0 9px 20px;
+      border-bottom: 1px solid #34413c;
+    }
+    .brand strong { display: block; font-size: 18px; letter-spacing: .02em; }
+    .brand span { display: block; margin-top: 6px; color: var(--nav-muted); font-size: 12px; }
+    nav { display: grid; gap: 5px; margin-top: 20px; }
+    nav button {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      min-height: 42px;
+      padding: 9px 12px;
+      border: 0;
+      background: transparent;
+      color: #dce5e1;
+      text-align: left;
+    }
+    nav button:hover { background: #22302b; }
+    nav button.active {
+      background: #f5f7f5;
+      color: var(--ink);
+      font-weight: 700;
+    }
+    nav small {
+      min-width: 21px;
+      padding: 2px 5px;
+      border-radius: 9px;
+      background: #32423c;
+      color: #dce5e1;
+      text-align: center;
+    }
+    nav button.active small { background: #e3e8e5; color: var(--ink); }
+    .aside-foot {
+      margin-top: auto;
+      padding: 14px 9px 0;
+      color: var(--nav-muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .aside-foot button {
+      width: 100%;
+      margin-top: 10px;
+      background: transparent;
+      border-color: #43534d;
+      color: #dce5e1;
+    }
+    main { min-width: 0; }
+    header {
+      position: sticky;
+      z-index: 5;
+      top: 0;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-height: 74px;
+      padding: 13px clamp(18px, 3vw, 42px);
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.96);
+    }
+    .headline { min-width: 0; margin-right: auto; }
+    .headline h1 { margin: 0; font-size: 20px; }
+    .headline p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+    .header-actions { display: flex; align-items: center; gap: 8px; }
+    .content { max-width: 1280px; padding: 30px clamp(18px, 3vw, 42px) 70px; }
+    .tab { display: none; }
+    .tab.active { display: block; }
+    .section-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .section-heading h2 { margin: 0; font-size: 24px; }
+    .section-heading p { max-width: 720px; margin: 6px 0 0; color: var(--muted); line-height: 1.6; }
+    .panel {
+      margin-bottom: 16px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+    .panel h3 { margin: 0 0 14px; font-size: 16px; }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .panel-head h3 { margin: 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    label { display: grid; gap: 6px; color: #3d4944; font-size: 12px; font-weight: 650; }
+    label small { color: var(--muted); font-weight: 400; }
+    .status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 25px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      background: #edf0ee;
+      color: #4d5954;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .badge.safe { background: #e0f1e9; color: var(--safe); }
+    .badge.warn { background: #f8ead7; color: var(--warn); }
+    .badge.danger { background: #f7dfdd; color: var(--danger); }
+    .credential {
+      display: grid;
+      grid-template-columns: minmax(160px, .8fr) minmax(220px, 1fr) minmax(220px, 1fr);
+      gap: 14px;
+      align-items: end;
+    }
+    .credential-meta { align-self: center; }
+    .credential-meta strong { display: block; margin-bottom: 7px; }
+    .credential-meta code, code {
+      font-family: Consolas, monospace;
+      font-size: 12px;
+    }
+    .secret-actions { display: flex; align-items: end; gap: 7px; }
+    .secret-actions label { flex: 1; }
+    .model-operation { margin-bottom: 22px; }
+    .model-operation:last-child { margin-bottom: 0; }
+    .route {
+      margin-top: 10px;
+      padding: 14px;
+      border: 1px solid #e0e5e2;
+      border-left: 4px solid #93a099;
+      background: #fbfcfb;
+    }
+    .route.primary-route { border-left-color: var(--accent); }
+    .route-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      font-weight: 700;
+    }
+    .route-actions { display: flex; gap: 6px; }
+    .route-actions button { min-height: 31px; padding: 4px 9px; }
+    details { margin-top: 12px; }
+    summary { cursor: pointer; color: var(--muted); }
+    .prompt-layout {
+      display: grid;
+      grid-template-columns: 310px minmax(0, 1fr);
+      min-height: 620px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+    .prompt-list {
+      padding: 16px;
+      border-right: 1px solid var(--line);
+      background: #f8faf8;
+    }
+    .prompt-filters { display: grid; gap: 8px; margin-bottom: 12px; }
+    .prompt-items { display: grid; gap: 4px; max-height: 520px; overflow: auto; }
+    .prompt-item {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      border: 0;
+      background: transparent;
+      text-align: left;
+    }
+    .prompt-item:hover { background: #eaf0ed; }
+    .prompt-item.active { background: #e2e9e5; color: #173d30; font-weight: 700; }
+    .prompt-item span { display: block; }
+    .prompt-item small { display: block; margin-top: 4px; color: var(--muted); }
+    .prompt-editor { min-width: 0; padding: 20px; }
+    .prompt-editor textarea { min-height: 460px; margin-top: 12px; }
+    .prompt-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+    .prompt-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+    .prompt-toolbar h3 { margin: 0; }
+    .runtime-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .backup-row {
+      display: grid;
+      grid-template-columns: 170px minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      padding: 12px 0;
+      border-top: 1px solid #edf0ee;
+    }
+    .backup-row:first-child { border-top: 0; }
+    .empty { padding: 38px 20px; color: var(--muted); text-align: center; }
+    .notice {
+      margin-bottom: 16px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--focus);
+      background: #eaf4f8;
+      line-height: 1.55;
+    }
+    .notice.warn { border-left-color: var(--warn); background: #fbf1e4; }
+    .notice.danger { border-left-color: var(--danger); background: #fae9e7; }
+    .toast {
+      position: fixed;
+      z-index: 20;
+      right: 24px;
+      bottom: 24px;
+      max-width: min(460px, calc(100vw - 32px));
+      padding: 13px 16px;
+      border-radius: 7px;
+      background: #16211d;
+      color: #fff;
+      line-height: 1.5;
+      opacity: 0;
+      transform: translateY(12px);
+      pointer-events: none;
+      transition: .18s ease;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.error { background: #8d2929; }
+    .loading {
+      display: grid;
+      place-items: center;
+      min-height: 70vh;
+      color: var(--muted);
+    }
+    .mobile-nav { display: none; }
+    @media (max-width: 980px) {
+      .app { grid-template-columns: 190px minmax(0, 1fr); }
+      .credential { grid-template-columns: 1fr 1fr; }
+      .credential-meta { grid-column: 1 / -1; }
+      .grid.three, .runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .prompt-layout { grid-template-columns: 250px minmax(0, 1fr); }
+    }
+    @media (max-width: 720px) {
+      .app { display: block; }
+      aside { display: none; }
+      header { position: static; align-items: flex-start; flex-wrap: wrap; }
+      .header-actions { width: 100%; }
+      .header-actions button { flex: 1; }
+      .mobile-nav {
+        display: flex;
+        gap: 6px;
+        padding: 10px 14px;
+        overflow-x: auto;
+        border-bottom: 1px solid var(--line);
+        background: #fff;
+      }
+      .mobile-nav button { white-space: nowrap; }
+      .mobile-nav button.active { color: #fff; background: var(--nav); }
+      .content { padding-top: 22px; }
+      .section-heading { align-items: flex-start; flex-direction: column; }
+      .grid, .grid.three, .runtime-grid, .credential { grid-template-columns: 1fr; }
+      .credential-meta { grid-column: auto; }
+      .prompt-layout { display: block; }
+      .prompt-list { border-right: 0; border-bottom: 1px solid var(--line); }
+      .prompt-items { max-height: 190px; }
+      .prompt-editor textarea { min-height: 390px; }
+      .backup-row { grid-template-columns: 1fr auto; }
+      .backup-row time { grid-column: 1 / -1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading" role="status">正在读取本地配置…</div>
+  <div id="app" class="app" hidden>
+    <aside>
+      <div class="brand">
+        <strong>Amazon 处理器</strong>
+        <span>本地配置管理中心</span>
+      </div>
+      <nav id="desktop-nav" aria-label="配置分类"></nav>
+      <div class="aside-foot">
+        仅连接本机 127.0.0.1<br>
+        完整 API 密钥不会返回浏览器
+        <button type="button" data-action="shutdown">关闭管理中心</button>
+      </div>
+    </aside>
+    <main>
+      <header>
+        <div class="headline">
+          <h1 id="page-title">API 密钥</h1>
+          <p id="status-text">正在检查配置状态</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" id="validate-button">检查配置</button>
+          <button type="button" class="primary" id="save-button">保存全部</button>
+        </div>
+      </header>
+      <div id="mobile-nav" class="mobile-nav" aria-label="移动端配置分类"></div>
+      <div class="content">
+        <section id="tab-credentials" class="tab" aria-labelledby="page-title"></section>
+        <section id="tab-models" class="tab" aria-labelledby="page-title"></section>
+        <section id="tab-prompts" class="tab" aria-labelledby="page-title"></section>
+        <section id="tab-runtime" class="tab" aria-labelledby="page-title"></section>
+        <section id="tab-backups" class="tab" aria-labelledby="page-title"></section>
+      </div>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script>
+  (() => {
+    "use strict";
+    const tabs = [
+      ["credentials", "API 密钥"],
+      ["models", "模型线路"],
+      ["prompts", "Prompt"],
+      ["runtime", "运行参数"],
+      ["backups", "备份记录"],
+    ];
+    const operationNames = {text: "文本处理", vision: "图片审查", image: "图片生成"};
+    const providers = {
+      text: [["deepseek", "DeepSeek"], ["agnes", "Agnes"]],
+      vision: [["agnes", "Agnes"]],
+      image: [["agnes", "Agnes"], ["gpt", "GPT Image / OpenAI 兼容"]],
+    };
+    let serverState = null;
+    let settings = null;
+    let promptDrafts = {};
+    let promptOriginals = {};
+    let secretActions = {};
+    let activeTab = "credentials";
+    let activePrompt = "";
+    let baseline = "";
+    let toastTimer = 0;
+    let lastInteraction = Date.now();
+
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    })[char]);
+    const canonical = value => JSON.stringify(value, Object.keys(value || {}).sort());
+    const deepClone = value => JSON.parse(JSON.stringify(value));
+
+    function stable(value) {
+      if (Array.isArray(value)) return value.map(stable);
+      if (value && typeof value === "object") {
+        return Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])]));
+      }
+      return value;
+    }
+
+    function draftFingerprint() {
+      return JSON.stringify(stable({settings, prompts: promptDrafts}));
+    }
+
+    function isDirty() {
+      return baseline && (
+        draftFingerprint() !== baseline
+        || Object.values(secretActions).some(item => item.action !== "keep")
+      );
+    }
+
+    function toast(message, error = false) {
+      const node = $("#toast");
+      node.textContent = message;
+      node.className = "toast show" + (error ? " error" : "");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => node.className = "toast", 4200);
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        credentials: "same-origin",
+        headers: options.body ? {"Content-Type": "application/json"} : {},
+        ...options,
+      });
+      let result = {};
+      try { result = await response.json(); } catch (_) {}
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.error || `请求失败（${response.status}）`);
+      }
+      return result;
+    }
+
+    function currentPayload() {
+      return {
+        revision: serverState.revision,
+        settings,
+        prompts: promptDrafts,
+        secrets: secretActions,
+      };
+    }
+
+    function updateHeader() {
+      const tab = tabs.find(item => item[0] === activeTab);
+      $("#page-title").textContent = tab ? tab[1] : "配置管理";
+      const dirty = isDirty();
+      const configured = serverState.credentials.filter(item => item.configured).length;
+      const processing = serverState.processing;
+      $("#status-text").textContent = processing
+        ? `处理器正在运行 · 配置只读 · ${configured}/${serverState.credentials.length} 个凭据已配置`
+        : `${dirty ? "有未保存修改" : "配置已同步"} · 签名 ${serverState.signature}`;
+      $("#save-button").disabled = processing || !dirty;
+      $("#validate-button").disabled = false;
+      $$("#desktop-nav button, #mobile-nav button").forEach(button => {
+        button.classList.toggle("active", button.dataset.tab === activeTab);
+      });
+    }
+
+    function navMarkup() {
+      return tabs.map(([id, label]) => {
+        let count = "";
+        if (id === "credentials") count = serverState.credentials.length;
+        if (id === "prompts") count = serverState.prompts.length;
+        if (id === "backups") count = serverState.backups.length;
+        return `<button type="button" data-tab="${id}"><span>${label}</span>${count !== "" ? `<small>${count}</small>` : ""}</button>`;
+      }).join("");
+    }
+
+    function switchTab(id) {
+      activeTab = id;
+      $$(".tab").forEach(tab => tab.classList.remove("active"));
+      $(`#tab-${id}`).classList.add("active");
+      updateHeader();
+    }
+
+    function credentialState(id) {
+      return serverState.credentials.find(item => item.id === id) || {
+        configured: false, source: "missing", masked: "", id,
+      };
+    }
+
+    function credentialUsage(id) {
+      const profile = settings.profiles[settings.active_profile] || {};
+      const uses = [];
+      Object.entries(profile).forEach(([operation, target]) => {
+        if (!target || typeof target !== "object") return;
+        if (target.credential === id) uses.push(`${operationNames[operation]}主线路`);
+        (target.fallbacks || []).forEach((fallback, index) => {
+          if (fallback.credential === id) uses.push(`${operationNames[operation]}备用${index + 1}`);
+        });
+      });
+      return uses;
+    }
+
+    function renderCredentials() {
+      const definitions = settings.credentials || {};
+      const rows = Object.entries(definitions).map(([id, definition]) => {
+        const state = credentialState(id);
+        const sourceLabel = state.source === "system" ? "系统环境变量覆盖" :
+          state.source === "env_file" ? ".env" : "未配置";
+        const statusClass = state.configured ? "safe" : "danger";
+        const disabled = state.source === "system" || serverState.processing;
+        const usage = credentialUsage(id);
+        return `<article class="panel" data-credential="${escapeHtml(id)}">
+          <div class="credential">
+            <div class="credential-meta">
+              <strong>${escapeHtml(definition.label)}</strong>
+              <div class="status-line">
+                <span class="badge ${statusClass}">${state.configured ? escapeHtml(state.masked) : "缺少密钥"}</span>
+                <span class="badge">${escapeHtml(sourceLabel)}</span>
+              </div>
+              <small>${usage.length ? `用于：${escapeHtml(usage.join("、"))}` : "当前未被线路引用"}</small>
+            </div>
+            <label>显示名称
+              <input data-field="credential-label" data-id="${escapeHtml(id)}" value="${escapeHtml(definition.label)}" ${serverState.processing ? "disabled" : ""}>
+              <small>凭据 ID：<code>${escapeHtml(id)}</code></small>
+            </label>
+            <label>环境变量
+              <input data-field="credential-env" data-id="${escapeHtml(id)}" value="${escapeHtml(definition.env)}" ${serverState.processing ? "disabled" : ""}>
+              <small>${state.source === "system" ? "系统变量优先，页面不能覆盖" : "实际值只保存在本机 .env"}</small>
+            </label>
+          </div>
+          <div class="secret-actions" style="margin-top:14px">
+            <label>替换密钥
+              <input type="password" autocomplete="new-password" data-field="secret" data-id="${escapeHtml(id)}" placeholder="${state.configured ? "留空表示不修改" : "输入 API 密钥"}" ${disabled ? "disabled" : ""}>
+            </label>
+            <button type="button" data-action="clear-secret" data-id="${escapeHtml(id)}" ${disabled ? "disabled" : ""}>清空</button>
+            <button type="button" class="danger" data-action="delete-credential" data-id="${escapeHtml(id)}" ${usage.length || serverState.processing ? "disabled" : ""}>删除凭据</button>
+          </div>
+        </article>`;
+      }).join("");
+      $("#tab-credentials").innerHTML = `
+        <div class="section-heading">
+          <div><h2>API 密钥</h2><p>页面永远不会读取或显示完整旧密钥。输入新值才会替换；由 Windows 系统环境变量提供的密钥只能在系统设置中修改。</p></div>
+          <button type="button" data-action="add-credential" ${serverState.processing ? "disabled" : ""}>新增命名凭据</button>
+        </div>
+        ${serverState.processing ? '<div class="notice warn">商品处理正在运行。为保证整批任务使用同一套配置，当前只能查看，不能保存。</div>' : ""}
+        ${rows || '<div class="panel empty">还没有命名凭据</div>'}`;
+    }
+
+    function providerOptions(operation, selected) {
+      return providers[operation].map(([value, label]) =>
+        `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`
+      ).join("");
+    }
+
+    function credentialOptions(selected) {
+      return Object.entries(settings.credentials || {}).map(([id, item]) =>
+        `<option value="${escapeHtml(id)}" ${id === selected ? "selected" : ""}>${escapeHtml(item.label)}（${escapeHtml(id)}）</option>`
+      ).join("");
+    }
+
+    function routeMarkup(operation, target, index) {
+      const isPrimary = index === 0;
+      const params = JSON.stringify(target.params || {}, null, 2);
+      return `<div class="route ${isPrimary ? "primary-route" : ""}" data-operation="${operation}" data-route-index="${index}">
+        <div class="route-title">
+          <span>${isPrimary ? "主线路" : `备用线路 ${index}`}</span>
+          ${isPrimary ? "" : `<div class="route-actions">
+            <button type="button" data-action="route-up" aria-label="上移线路">↑</button>
+            <button type="button" data-action="route-down" aria-label="下移线路">↓</button>
+            <button type="button" class="danger" data-action="route-delete">删除</button>
+          </div>`}
+        </div>
+        <div class="grid three">
+          <label>Provider
+            <select data-route-field="provider">${providerOptions(operation, target.provider)}</select>
+          </label>
+          <label>模型名称
+            <input data-route-field="model" value="${escapeHtml(target.model || "")}" placeholder="model-name">
+          </label>
+          <label>使用凭据
+            <select data-route-field="credential">${credentialOptions(target.credential)}</select>
+          </label>
+        </div>
+        <label style="margin-top:12px">API Endpoint
+          <input data-route-field="base_url" value="${escapeHtml(target.base_url || "")}" placeholder="https://api.example.com">
+          <small>必须使用 HTTPS；127.0.0.1 或 localhost 可使用 HTTP。</small>
+        </label>
+        <details>
+          <summary>高级参数（JSON）</summary>
+          <textarea rows="4" data-route-field="params">${escapeHtml(params)}</textarea>
+        </details>
+      </div>`;
+    }
+
+    function renderModels() {
+      const profile = settings.profiles[settings.active_profile];
+      const sections = ["text", "vision", "image"].map(operation => {
+        const primary = profile[operation];
+        const routes = [primary, ...(primary.fallbacks || [])];
+        return `<div class="model-operation panel">
+          <div class="panel-head">
+            <div><h3>${operationNames[operation]}</h3><small>按从上到下的顺序自动回退</small></div>
+            <button type="button" data-action="route-add" data-operation="${operation}" ${serverState.processing ? "disabled" : ""}>增加备用线路</button>
+          </div>
+          ${routes.map((route, index) => routeMarkup(operation, route, index)).join("")}
+        </div>`;
+      }).join("");
+      $("#tab-models").innerHTML = `
+        <div class="section-heading">
+          <div><h2>模型与回退线路</h2><p>每条线路独立选择 Provider、Endpoint、模型和命名凭据。保存前会检查所有主线路和备用线路都能找到密钥。</p></div>
+          <span class="badge">当前配置档：${escapeHtml(settings.active_profile)}</span>
+        </div>${sections}`;
+      if (serverState.processing) {
+        $$("#tab-models input, #tab-models select, #tab-models textarea, #tab-models button").forEach(node => node.disabled = true);
+      }
+    }
+
+    function promptCategories() {
+      return [...new Set(serverState.prompts.map(item => item.category))];
+    }
+
+    function renderPrompts() {
+      if (!activePrompt || !promptDrafts[activePrompt]) {
+        activePrompt = serverState.prompts[0]?.id || "";
+      }
+      $("#tab-prompts").innerHTML = `
+        <div class="section-heading">
+          <div><h2>Prompt</h2><p>所有 AI 指令都由 manifest 注册。必需变量必须保留，Prompt 或模型变化会自动产生新的缓存签名。</p></div>
+        </div>
+        <div class="prompt-layout">
+          <div class="prompt-list">
+            <div class="prompt-filters">
+              <input id="prompt-search" type="search" placeholder="搜索 Prompt">
+              <select id="prompt-category"><option value="">全部分类</option>${promptCategories().map(item => `<option>${escapeHtml(item)}</option>`).join("")}</select>
+            </div>
+            <div id="prompt-items" class="prompt-items"></div>
+          </div>
+          <div id="prompt-editor" class="prompt-editor"></div>
+        </div>`;
+      renderPromptList();
+      renderPromptEditor();
+    }
+
+    function renderPromptList() {
+      const query = ($("#prompt-search")?.value || "").trim().toLowerCase();
+      const category = $("#prompt-category")?.value || "";
+      const filtered = serverState.prompts.filter(item => {
+        const haystack = `${item.id} ${item.label} ${item.used_by}`.toLowerCase();
+        return (!query || haystack.includes(query)) && (!category || item.category === category);
+      });
+      $("#prompt-items").innerHTML = filtered.map(item => `
+        <button type="button" class="prompt-item ${item.id === activePrompt ? "active" : ""}" data-prompt="${escapeHtml(item.id)}">
+          <span>${escapeHtml(item.label)}</span>
+          <small>${escapeHtml(item.id)}</small>
+        </button>`).join("") || '<div class="empty">没有匹配的 Prompt</div>';
+    }
+
+    function renderPromptEditor() {
+      const meta = serverState.prompts.find(item => item.id === activePrompt);
+      if (!meta) {
+        $("#prompt-editor").innerHTML = '<div class="empty">请选择一个 Prompt</div>';
+        return;
+      }
+      const changed = promptDrafts[activePrompt] !== promptOriginals[activePrompt];
+      $("#prompt-editor").innerHTML = `
+        <div class="prompt-toolbar">
+          <div><h3>${escapeHtml(meta.label)}</h3><small>${escapeHtml(meta.used_by)}</small></div>
+          <button type="button" data-action="reset-prompt" ${!changed || serverState.processing ? "disabled" : ""}>撤销此 Prompt</button>
+        </div>
+        <div class="prompt-meta">
+          <span class="badge">${escapeHtml(meta.category)}</span>
+          <span class="badge">${changed ? "已修改" : "未修改"}</span>
+          <span class="badge">${promptDrafts[activePrompt].length} 字符</span>
+          ${(meta.variables || []).map(item => `<span class="badge safe">{${escapeHtml(item)}}</span>`).join("")}
+        </div>
+        <textarea id="prompt-textarea" spellcheck="false" ${serverState.processing ? "disabled" : ""}>${escapeHtml(promptDrafts[activePrompt])}</textarea>
+        <p style="color:var(--muted);line-height:1.55">文件：<code>config/prompts/${escapeHtml(meta.path)}</code>。带变量的 Prompt 必须保留上方全部占位符；JSON 示例中的花括号请使用双花括号。</p>`;
+    }
+
+    function renderRuntime() {
+      const runtime = settings.runtime || {};
+      $("#tab-runtime").innerHTML = `
+        <div class="section-heading">
+          <div><h2>并发与稳定性</h2><p>这里控制文本、审图、生图并发，以及 Agnes 503 快速重试、熔断和恢复策略。超出安全范围的值不能保存。</p></div>
+        </div>
+        <div class="panel runtime-grid">
+          ${serverState.runtime_fields.map(field => `<label>${escapeHtml(field.label)}
+            <input type="number" data-runtime="${escapeHtml(field.key)}" value="${escapeHtml(runtime[field.key])}" min="${field.min}" max="${field.max}" step="${field.step}" ${serverState.processing ? "disabled" : ""}>
+            <small>${field.min} – ${field.max}</small>
+          </label>`).join("")}
+        </div>`;
+    }
+
+    function renderBackups() {
+      const rows = serverState.backups.map(item => `
+        <div class="backup-row">
+          <time>${escapeHtml(item.created_at || item.name)}</time>
+          <div><strong>${escapeHtml(item.reason)}</strong><br><code>${escapeHtml(item.name)}</code></div>
+          <button type="button" data-action="restore" data-name="${escapeHtml(item.name)}" ${serverState.processing ? "disabled" : ""}>恢复</button>
+        </div>`).join("");
+      $("#tab-backups").innerHTML = `
+        <div class="section-heading">
+          <div><h2>本地备份</h2><p>每次保存前自动保留完整配置、Prompt 和本机 .env，最多 10 份。备份只存在于被 Git 忽略的 .runtime 目录。</p></div>
+        </div>
+        <div class="panel">${rows || '<div class="empty">尚无配置备份</div>'}</div>`;
+    }
+
+    function renderAll() {
+      $("#desktop-nav").innerHTML = navMarkup();
+      $("#mobile-nav").innerHTML = navMarkup();
+      renderCredentials();
+      renderModels();
+      renderPrompts();
+      renderRuntime();
+      renderBackups();
+      switchTab(activeTab);
+    }
+
+    function loadState(value) {
+      serverState = value;
+      settings = deepClone(value.settings);
+      promptDrafts = Object.fromEntries(value.prompts.map(item => [item.id, item.content]));
+      promptOriginals = deepClone(promptDrafts);
+      secretActions = Object.fromEntries(
+        Object.keys(settings.credentials || {}).map(id => [id, {action: "keep"}])
+      );
+      baseline = draftFingerprint();
+      renderAll();
+      $("#loading").hidden = true;
+      $("#app").hidden = false;
+    }
+
+    function routeTarget(operation, index) {
+      const primary = settings.profiles[settings.active_profile][operation];
+      return index === 0 ? primary : primary.fallbacks[index - 1];
+    }
+
+    function updateRouteField(container, field, value) {
+      const operation = container.dataset.operation;
+      const index = Number(container.dataset.routeIndex);
+      const target = routeTarget(operation, index);
+      if (field === "params") {
+        try {
+          const parsed = JSON.parse(value || "{}");
+          if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error();
+          target.params = parsed;
+          container.querySelector('[data-route-field="params"]').setCustomValidity("");
+        } catch (_) {
+          container.querySelector('[data-route-field="params"]').setCustomValidity("必须是 JSON 对象");
+          return;
+        }
+      } else {
+        target[field] = value;
+      }
+      updateHeader();
+    }
+
+    async function validate(save = false) {
+      if (!document.querySelector("input:invalid, select:invalid, textarea:invalid")) {
+        const button = save ? $("#save-button") : $("#validate-button");
+        button.disabled = true;
+        const oldText = button.textContent;
+        button.textContent = save ? "保存中…" : "检查中…";
+        try {
+          const result = await api(save ? "/api/save" : "/api/validate", {
+            method: "POST",
+            body: JSON.stringify(currentPayload()),
+          });
+          if (save) {
+            loadState(result.state);
+            toast(result.cache_invalidated ? "保存成功；相关缓存将在下次运行自动更新" : "保存成功；缓存签名未变化");
+          } else {
+            toast(`配置检查通过 · 签名 ${result.signature}`);
+          }
+        } catch (error) {
+          toast(error.message, true);
+        } finally {
+          button.textContent = oldText;
+          updateHeader();
+        }
+      } else {
+        document.querySelector("input:invalid, select:invalid, textarea:invalid").reportValidity();
+      }
+    }
+
+    document.addEventListener("click", async event => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      if (button.dataset.tab) {
+        switchTab(button.dataset.tab);
+        return;
+      }
+      const action = button.dataset.action;
+      if (action === "shutdown") {
+        if (isDirty() && !confirm("还有未保存修改，仍然关闭管理中心吗？")) return;
+        try { await api("/api/shutdown", {method: "POST", body: "{}"}); } catch (_) {}
+        window.close();
+        document.body.innerHTML = '<div class="loading">配置管理中心已关闭，可以关闭此页面。</div>';
+      }
+      if (action === "clear-secret") {
+        const id = button.dataset.id;
+        if (confirm(`确认清空 ${settings.credentials[id].label} 的 .env 密钥吗？`)) {
+          secretActions[id] = {action: "clear"};
+          const input = $(`[data-field="secret"][data-id="${CSS.escape(id)}"]`);
+          if (input) input.value = "";
+          toast("已标记为清空，点击“保存全部”后生效");
+          updateHeader();
+        }
+      }
+      if (action === "delete-credential") {
+        const id = button.dataset.id;
+        if (confirm(`删除命名凭据 ${id}？对应 .env 行会在保存后移除。`)) {
+          delete settings.credentials[id];
+          delete secretActions[id];
+          renderCredentials();
+          renderModels();
+          updateHeader();
+        }
+      }
+      if (action === "add-credential") {
+        const id = prompt("输入凭据 ID（小写字母、数字、下划线）：", "new_route");
+        if (!id) return;
+        if (!/^[a-z][a-z0-9_]*$/.test(id) || settings.credentials[id]) {
+          toast("凭据 ID 不合法或已经存在", true);
+          return;
+        }
+        const label = prompt("输入显示名称：", "新 API 线路");
+        if (!label) return;
+        const env = `AMAZON_API_KEY_${id.toUpperCase()}`;
+        settings.credentials[id] = {label, env};
+        secretActions[id] = {action: "keep"};
+        renderCredentials();
+        renderModels();
+        updateHeader();
+      }
+      if (action === "route-add") {
+        const operation = button.dataset.operation;
+        const primary = settings.profiles[settings.active_profile][operation];
+        primary.fallbacks = primary.fallbacks || [];
+        primary.fallbacks.push({
+          provider: primary.provider,
+          credential: primary.credential,
+          base_url: primary.base_url,
+          model: primary.model,
+          params: deepClone(primary.params || {}),
+        });
+        renderModels();
+        updateHeader();
+      }
+      if (["route-up", "route-down", "route-delete"].includes(action)) {
+        const route = button.closest(".route");
+        const operation = route.dataset.operation;
+        const index = Number(route.dataset.routeIndex) - 1;
+        const fallbacks = settings.profiles[settings.active_profile][operation].fallbacks;
+        if (action === "route-delete") fallbacks.splice(index, 1);
+        if (action === "route-up" && index > 0) {
+          [fallbacks[index - 1], fallbacks[index]] = [fallbacks[index], fallbacks[index - 1]];
+        }
+        if (action === "route-down" && index < fallbacks.length - 1) {
+          [fallbacks[index + 1], fallbacks[index]] = [fallbacks[index], fallbacks[index + 1]];
+        }
+        renderModels();
+        updateHeader();
+      }
+      if (button.dataset.prompt) {
+        activePrompt = button.dataset.prompt;
+        renderPromptList();
+        renderPromptEditor();
+      }
+      if (action === "reset-prompt") {
+        promptDrafts[activePrompt] = promptOriginals[activePrompt];
+        renderPromptEditor();
+        renderPromptList();
+        updateHeader();
+      }
+      if (action === "restore") {
+        if (isDirty() && !confirm("恢复备份会放弃当前未保存修改，继续吗？")) return;
+        if (!confirm(`恢复备份 ${button.dataset.name}？当前配置会先自动备份。`)) return;
+        button.disabled = true;
+        try {
+          const result = await api("/api/restore", {
+            method: "POST",
+            body: JSON.stringify({name: button.dataset.name, revision: serverState.revision}),
+          });
+          loadState(result.state);
+          toast("备份恢复成功");
+        } catch (error) {
+          toast(error.message, true);
+          button.disabled = false;
+        }
+      }
+    });
+
+    document.addEventListener("input", event => {
+      const node = event.target;
+      if (node.dataset.field === "credential-label") {
+        settings.credentials[node.dataset.id].label = node.value;
+      }
+      if (node.dataset.field === "credential-env") {
+        settings.credentials[node.dataset.id].env = node.value.trim();
+      }
+      if (node.dataset.field === "secret") {
+        secretActions[node.dataset.id] = node.value
+          ? {action: "replace", value: node.value}
+          : {action: "keep"};
+      }
+      if (node.dataset.routeField) {
+        updateRouteField(node.closest(".route"), node.dataset.routeField, node.value);
+      }
+      if (node.dataset.runtime) {
+        const meta = serverState.runtime_fields.find(item => item.key === node.dataset.runtime);
+        settings.runtime[node.dataset.runtime] = meta.type === "int"
+          ? Number.parseInt(node.value, 10)
+          : Number.parseFloat(node.value);
+      }
+      if (node.id === "prompt-textarea") {
+        promptDrafts[activePrompt] = node.value;
+        const position = node.selectionStart;
+        renderPromptEditor();
+        const replacement = $("#prompt-textarea");
+        replacement.focus();
+        replacement.setSelectionRange(position, position);
+      }
+      if (node.id === "prompt-search" || node.id === "prompt-category") renderPromptList();
+      updateHeader();
+    });
+
+    $("#validate-button").addEventListener("click", () => validate(false));
+    $("#save-button").addEventListener("click", () => validate(true));
+    window.addEventListener("beforeunload", event => {
+      if (isDirty()) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    });
+    ["pointerdown", "keydown", "scroll"].forEach(name =>
+      window.addEventListener(name, () => lastInteraction = Date.now(), {passive: true})
+    );
+    setInterval(async () => {
+      if (Date.now() - lastInteraction > 30 * 60 * 1000) {
+        try { await api("/api/shutdown", {method: "POST", body: "{}"}); } catch (_) {}
+        document.body.innerHTML = '<div class="loading">因 30 分钟未操作，配置管理中心已自动关闭。</div>';
+        return;
+      }
+      try { await api("/api/heartbeat", {method: "POST", body: "{}"}); } catch (_) {}
+    }, 20000);
+
+    api("/api/state").then(loadState).catch(error => {
+      $("#loading").innerHTML = `<div class="notice danger">配置管理中心无法启动：${escapeHtml(error.message)}</div>`;
+    });
+  })();
+  </script>
+</body>
+</html>

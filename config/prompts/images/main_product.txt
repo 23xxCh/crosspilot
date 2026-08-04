@@ -1,11 +1,45 @@
-Create a 1600x1600 e-commerce main product photo from the reference image. Rules:
-- Pure white background (#FFFFFF). No shadows, borders, or frames.
-- Remove only external watermark overlays, seller/store marks, promotional captions, and unrelated packaging text.
-- CRITICAL DISTINCTION: Preserve product-intrinsic artwork, patterns, symbols, labels, and printed words when they are physically part of the item being sold. If uncertain whether a mark is product-intrinsic or an external watermark, preserve it because deleting it changes the product.
-- Remove every person and all human presence, including models, faces, heads, hands, arms, legs, feet, bodies, silhouettes, reflections, mannequins, and people in the background or printed graphics.
-- Reconstruct any product area hidden by a person so the product remains complete and realistic. Do not add any person, mannequin, human body part, or hand.
-- Product occupies approximately 85% of the frame, centered, with the front view clearly visible.
-- CRITICAL: Preserve the product's exact shape, contours, dimensions, hole positions, proportions, color, texture, artwork, and external structure. Preserve the exact item count and every separately sold component visible in the reference.
-- A flat sticker, decal, film, tape strip, label, or printed sheet must remain flat and flexible. Never turn it into a tire, rigid shell, installed vehicle part, roll, box, or other object. Do not invent an installation state.
-- Do not add, remove, merge, duplicate, rearrange, or redesign product components. Change only confirmed external overlays, people, and the background.
-- Use professional studio lighting and realistic material texture.
+TASK: Perform a minimal local cleanup of the PROVIDED REFERENCE IMAGE. This is
+image-to-image editing, not image generation from scratch. The output must look
+like the original photo with only the unwanted marks locally erased.
+
+HARD REFERENCE LOCK — higher priority than visual polish:
+- Keep the exact composition, viewpoint, camera angle, perspective, crop,
+  framing, aspect ratio, object scale, object position, background, lighting,
+  shadows, reflections, colors, materials, textures, and overall style.
+- Preserve the exact same product identity, shape, contour, proportions,
+  quantity, component positions, holes, seams, edges, and every sold part.
+- Treat every area outside the unwanted marks as locked reference content.
+  Do not repaint, redraw, regenerate, or reinterpret those areas.
+- Do not recenter, zoom, rotate, restage, beautify, simplify, replace the
+  background, improve the photography, or create a new catalog composition.
+
+ONLY ALLOWED EDIT:
+- Remove ALL visible text and text-like content from the main image, regardless
+  of language or purpose. This includes letters, words, numbers, dimensions,
+  model numbers, specifications, labels, packaging text, brand names, vehicle
+  badges and emblems, logo graphics, watermarks, seller/store marks, URLs,
+  marketplace marks, QR codes, promotional labels, price text, and pseudo-text.
+- A vehicle badge or emblem in the reference is always an unwanted mark. The
+  output must not preserve, sharpen, trace, or recreate it. Replace only that
+  badge-sized area with the immediately surrounding plain body color, material,
+  highlight, and reflection so no emblem-shaped residue remains.
+- Do not translate or retain English product information. The final main image
+  should contain no visible text, numbers, labels, logos, or malformed
+  characters.
+- Edit the smallest possible local region around each unwanted mark. Heal that
+  region by continuing the immediately surrounding color, texture, and
+  material. Preserve the underlying surface shape, edge, highlight, and shadow.
+- Never use a large patch, global blur, broad repaint, or full-product redraw.
+  If a mark is on the product, remove only the mark and keep the product surface
+  and geometry unchanged.
+
+DO NOT ADD OR INVENT:
+- No new text, labels, marketing copy, brands, logos, pseudo-text, model
+  numbers, people, hands, vehicles, extra parts, missing parts, or a different
+  product.
+- Do not alter unrelated defects or details. Do not change anything merely to
+  make the image cleaner or more attractive.
+
+FINAL PRIORITY: first preserve the same reference photo and product; second
+remove the unwanted marks; third make only those tiny repaired areas natural.
+Never reconstruct the whole image to achieve a cleaner result.

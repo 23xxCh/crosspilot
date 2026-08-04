@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import threading
 
+from ..config.prompts import get_prompt_registry
 from ..providers import get_provider
 from .exporter import _atomic_json, _load_json
 
@@ -20,11 +21,28 @@ def _plain_text(value: str) -> str:
     text = _TAG_RE.sub(' ', text)
     return re.sub(r'\s+', ' ', text).strip()
 
+def _plain_description(value: str) -> str:
+    """Remove markup while preserving intentional description paragraphs."""
+    text = html.unescape(str(value or ''))
+    text = re.sub(r'<\s*(?:br|/p|/div)\s*/?\s*>', '\n', text, flags=re.IGNORECASE)
+    text = _TAG_RE.sub(' ', text)
+    lines = [
+        re.sub(r'[^\S\r\n]+', ' ', line).strip()
+        for line in text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    ]
+    normalized = '\n'.join(lines)
+    return re.sub(r'\n{3,}', '\n\n', normalized).strip()
+
 
 def _source_row(payload: dict, index: int) -> dict:
     return {
         'title': _plain_text(payload['产品标题'][index]),
-        'description': _plain_text(payload['产品描述'][index]),
+        'subtitle': _plain_text(
+            (payload.get('副标题') or [''])[index]
+            if index < len(payload.get('副标题') or [])
+            else ''
+        ),
+        'description': _plain_description(payload['产品描述'][index]),
         'bullets': [
             _plain_text(payload[f'Bullet Point{number}'][index])
             for number in range(1, 6)
@@ -34,8 +52,12 @@ def _source_row(payload: dict, index: int) -> dict:
 
 
 def _translation_signature(row: dict) -> str:
+    payload = {
+        "row": row,
+        "prompt": get_prompt_registry().signature("review.translation"),
+    }
     encoded = json.dumps(
-        row,
+        payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(',', ':'),
@@ -67,23 +89,51 @@ def _valid_translation(source: dict, value: dict | None) -> bool:
     if not isinstance(value, dict):
         return False
     title = value.get('title')
+    subtitle = value.get('subtitle', '')
     description = value.get('description')
     bullets = value.get('bullets')
     keywords = value.get('keywords')
     if not isinstance(title, str) or not title.strip():
         return False
+    if not isinstance(subtitle, str):
+        return False
+    if source.get('subtitle') and not subtitle.strip():
+        return False
     if not isinstance(description, str):
         return False
     if source['description'] and not description.strip():
         return False
+    if '\n\n' in source['description'] and '\n\n' not in description:
+        return False
+    source_detail_lines = [
+        line for line in source['description'].splitlines()
+        if ':' in line
+    ]
+    translated_detail_lines = [
+        line for line in description.splitlines()
+        if ':' in line or '：' in line
+    ]
+    if source_detail_lines and len(translated_detail_lines) < len(source_detail_lines):
+        return False
     if not isinstance(bullets, list) or len(bullets) != 5:
         return False
-    if any(not isinstance(item, str) or not item.strip() for item in bullets):
+    if any(not isinstance(item, str) for item in bullets):
         return False
-    if not isinstance(keywords, str) or not keywords.strip():
+    if any(
+        source_item and not translated_item.strip()
+        for source_item, translated_item in zip(
+            source['bullets'],
+            bullets,
+        )
+    ):
+        return False
+    if not isinstance(keywords, str):
+        return False
+    if source['keywords'] and not keywords.strip():
         return False
     combined = ' '.join([
         title,
+        subtitle,
         description,
         *bullets,
         keywords,
@@ -92,15 +142,9 @@ def _valid_translation(source: dict, value: dict | None) -> bool:
 
 
 def _translate_row(provider, source: dict) -> dict | None:
-    prompt = (
-        '你是跨境电商商品文案翻译员。把下面 JSON 中所有英文商品文案'
-        '翻译成简体中文，仅翻译文字，不增加、删除或猜测产品事实。'
-        '数字、尺寸、数量、型号、单位和兼容关系必须原样保留。'
-        '关键词翻译成中文搜索词，并保持逗号分隔。'
-        '必须只返回一个 JSON 对象，字段严格为 '
-        'title、description、bullets、keywords；'
-        'bullets 必须恰好 5 条，不要 Markdown，不要解释。\n\n'
-        + json.dumps(source, ensure_ascii=False)
+    prompt = get_prompt_registry().render(
+        "review.translation",
+        source_json=json.dumps(source, ensure_ascii=False),
     )
     raw = provider.call_text(prompt, max_tokens=6000)
     value = _extract_json_object(raw)
@@ -108,6 +152,7 @@ def _translate_row(provider, source: dict) -> dict | None:
         return None
     return {
         'title': value['title'].strip(),
+        'subtitle': str(value.get('subtitle') or '').strip(),
         'description': value['description'].strip(),
         'bullets': [str(item).strip() for item in value['bullets']],
         'keywords': value['keywords'].strip(),

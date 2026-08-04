@@ -48,6 +48,7 @@ def _processed_rows():
     return [{
         'id': 'item-1',
         'title': 'Optimized title',
+        'subtitle': 'Durable material, compact fit',
         'desc': 'Clean description',
         'main_img': 'https://generated/main.jpg',
         'extra_imgs': ['https://img/attachment-clean.jpg'],
@@ -75,6 +76,7 @@ def test_build_output_payload_matches_refill_template_shape():
     assert tuple(payload) == AMAZON_JSON_OUTPUT_FIELDS
     assert payload['商品id'] == ['item-1']
     assert payload['产品标题'] == ['Optimized title']
+    assert payload['副标题'] == ['Durable material, compact fit']
     assert payload['产品描述'] == ['Clean description']
     assert payload['产品图片链接'] == [[
         'https://generated/main.jpg',
@@ -100,7 +102,7 @@ def test_build_output_payload_preserves_duplicate_variant_positions():
     ]]
 
 
-def test_build_output_payload_includes_missing_description_problem_id():
+def test_build_output_payload_does_not_promote_quality_warning_to_problem_id():
     row = _processed_rows()[0]
     row['desc'] = ''
     row['_quality_issues'] = [{
@@ -111,7 +113,49 @@ def test_build_output_payload_includes_missing_description_problem_id():
     payload = build_output_payload([row])
 
     assert payload['产品描述'] == ['']
-    assert payload['有问题的产品id'] == ['item-1']
+    assert payload['有问题的产品id'] == []
+
+
+def test_build_output_payload_uses_only_explicit_problem_product_ids():
+    row = _processed_rows()[0]
+    row['_quality_issues'] = [{
+        'code': 'description_fact_loss',
+        'message': '普通质检提示',
+    }]
+
+    payload = build_output_payload(
+        [row],
+        problem_product_ids=['missing-description-id'],
+    )
+
+    assert payload['商品id'] == ['item-1']
+    assert payload['有问题的产品id'] == [
+        'missing-description-id',
+    ]
+
+
+def test_build_output_payload_removes_problem_product_from_every_row_field():
+    problem_row = _processed_rows()[0]
+    retained_row = {
+        **_processed_rows()[0],
+        "id": "item-2",
+        "title": "Retained title",
+    }
+
+    payload = build_output_payload(
+        [problem_row, retained_row],
+        problem_product_ids=["item-1"],
+    )
+
+    assert payload["商品id"] == ["item-2"]
+    assert payload["产品标题"] == ["Retained title"]
+    assert payload["副标题"] == ["Durable material, compact fit"]
+    assert payload["有问题的产品id"] == ["item-1"]
+    assert all(
+        len(payload[field]) == 1
+        for field in AMAZON_JSON_OUTPUT_FIELDS
+        if field != "有问题的产品id"
+    )
 
 
 def test_write_output_uses_exact_json_contract(tmp_path):
@@ -180,6 +224,23 @@ def test_load_rejects_invalid_image_url(tmp_path):
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
 
     with pytest.raises(ValueError, match='无效图片 URL'):
+        load_columnar_json(str(path))
+
+
+def test_load_rejects_duplicate_product_ids(tmp_path):
+    payload = _valid_input()
+    for field in AMAZON_JSON_INPUT_FIELDS:
+        payload[field] = [payload[field][0], payload[field][0]]
+    path = tmp_path / "duplicate-id.json"
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"商品id不能重复.*item-1.*第 1, 2 行",
+    ):
         load_columnar_json(str(path))
 
 

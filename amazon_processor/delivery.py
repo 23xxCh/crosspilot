@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import time
+from uuid import uuid4
 import zipfile
 
 from .quality import (
@@ -16,10 +17,11 @@ from .quality import (
 from .review.exporter import export_review
 from .runtime import RunContext, RunResult
 from .schema import write_output_json
+from .config.env import get
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_ROOT = PROJECT_ROOT / "输出"
+OUTPUT_ROOT = PROJECT_ROOT / "02_处理结果"
 RUNTIME_ROOT = PROJECT_ROOT / ".runtime"
 LATEST_DIR = OUTPUT_ROOT / "最新"
 ARCHIVE_DIR = OUTPUT_ROOT / "归档"
@@ -35,12 +37,14 @@ def _assert_formal_images_are_safe(
     """Refuse delivery when any retained image lacks a current safe record."""
     if not runtime_metrics.get("image_safety_gate"):
         return
+    human_review_generated = (
+        get("GENERATED_IMAGE_REVIEW_MODE", "strict").strip().lower()
+        == "human_review"
+    )
     violations = []
     for row in data:
         by_role_url = {
-            (str(item.get("role") or ""), str(item.get("url") or "")): (
-                item.get("assessment") or {}
-            )
+            (str(item.get("role") or ""), str(item.get("url") or "")): item
             for item in row.get("_image_assessments") or []
         }
         final_images = [
@@ -57,7 +61,16 @@ def _assert_formal_images_are_safe(
         for role, url in final_images:
             if not url:
                 continue
-            assessment = by_role_url.get((role, url)) or {}
+            record = by_role_url.get((role, url)) or {}
+            if (
+                human_review_generated
+                and record.get("source") == "generated"
+                and record.get("accepted_without_machine_review") is True
+            ):
+                continue
+            if record.get("image_action") == "keep_review":
+                continue
+            assessment = record.get("assessment") or {}
             if assessment.get("status") != "safe":
                 violations.append(
                     {
@@ -66,6 +79,7 @@ def _assert_formal_images_are_safe(
                         "status": assessment.get("status") or "missing",
                     }
                 )
+                continue
     if violations:
         sample = ", ".join(
             f"{item['product_id']}:{item['role']}={item['status']}"
@@ -109,9 +123,13 @@ def _publish(staging: Path) -> Path | None:
     previous = RUNTIME_ROOT / "previous_latest"
     if previous.exists():
         shutil.rmtree(previous)
-    try:
-        if LATEST_DIR.exists():
+    if LATEST_DIR.exists():
+        try:
             os.replace(LATEST_DIR, previous)
+        except PermissionError:
+            _publish_open_latest_files(staging)
+            return archived
+    try:
         LATEST_DIR.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging, LATEST_DIR)
     except Exception:
@@ -124,10 +142,27 @@ def _publish(staging: Path) -> Path | None:
     return archived
 
 
+def _publish_open_latest_files(staging: Path) -> None:
+    """Replace published files individually when Windows keeps latest open."""
+    for source in staging.rglob("*"):
+        if not source.is_file():
+            continue
+        target = LATEST_DIR / source.relative_to(staging)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+        try:
+            shutil.copy2(source, temporary)
+            os.replace(temporary, target)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    shutil.rmtree(staging)
+
+
 def deliver(
     context: RunContext,
     *,
-    additional_problem_ids: list[str],
+    problem_product_ids: list[str],
 ) -> RunResult:
     """Build all formal artifacts in staging, validate, then publish once."""
     _assert_formal_images_are_safe(context.data, context.runtime_metrics)
@@ -148,7 +183,7 @@ def deliver(
     write_output_json(
         context.data,
         output,
-        additional_problem_ids=additional_problem_ids,
+        problem_product_ids=problem_product_ids,
     )
 
     if hasattr(context.provider, "metrics_snapshot"):
@@ -165,6 +200,16 @@ def deliver(
     run_metrics = context.metrics.to_dict()
     run_metrics["image_safety_gate"] = dict(
         context.runtime_metrics.get("image_safety_gate") or {}
+    )
+    run_metrics["description_rejected_products"] = list(
+        context.runtime_metrics.get("description_rejected_products") or []
+    )
+    run_metrics["problem_product_ids"] = list(
+        dict.fromkeys(
+            str(product_id)
+            for product_id in problem_product_ids
+            if str(product_id)
+        )
     )
 
     audit_by_product = {

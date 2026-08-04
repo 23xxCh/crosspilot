@@ -44,6 +44,9 @@ class ProviderUnavailableError(ProviderError):
     """The provider or queue is temporarily unavailable."""
     retryable = True
 
+class ProviderCircuitOpenError(ProviderUnavailableError):
+    """A temporary logical circuit skip, not a completed provider attempt."""
+
 class ProviderResponseError(ProviderError):
     """The request or successful response did not match the API contract."""
 
@@ -209,11 +212,13 @@ class ModelProvider(ABC):
     def call_vision(self, image_url: str) -> Optional[bool]:
         raise NotImplementedError
 
-    def assess_image(self, image_url: str, *, confirmation: bool=False) -> Optional[dict[str, Any]]:
+    def assess_image(self, image_url: str, *, confirmation: bool=False, policy: str="general") -> Optional[dict[str, Any]]:
         """Return a structured image-risk result when supported."""
         del confirmation
+        if policy != "general":
+            return None
         return assessment_from_legacy(self.call_vision(image_url))
 
     @abstractmethod
-    def call_image_gen(self, image_url: str, size: str='1024x1024', is_variant: bool=False, context: str='', route_offset: int=0) -> Optional[str]:
+    def call_image_gen(self, image_url: str, size: str='1024x1024', is_variant: bool=False, context: str='', route_offset: int=0, reference_free: bool=False) -> Optional[str]:
         raise NotImplementedError

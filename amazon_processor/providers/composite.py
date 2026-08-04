@@ -8,8 +8,14 @@ from typing import Optional
 from .agnes import AgnesProvider
 from .support import ModelProvider, CongestionPolicy
 from .deepseek import DeepSeekProvider
-from .support import ProviderError, ProviderQuotaError
+from .support import (
+    ProviderAuthError,
+    ProviderCircuitOpenError,
+    ProviderError,
+    ProviderQuotaError,
+)
 from .gpt_image import GPTImageProvider
+from .ollama_vision import OllamaVisionProvider
 
 
 class CompositeProvider(ModelProvider):
@@ -46,12 +52,21 @@ class CompositeProvider(ModelProvider):
         self._agnes_congestion_policy = (
             CongestionPolicy.from_mapping(config)
         )
-        self._configure_text(config)
-        self._configure_vision(config)
-        self._configure_image(config)
+        self._text_fallbacks: list[ModelProvider] = []
+        self._vision_fallbacks: list[ModelProvider] = []
+        self._image_gen_fallbacks: list[ModelProvider] = []
+        self._fallback_image_gen = None
+        if config.get("routes"):
+            self._configure_route_table(config["routes"])
+        else:
+            self._configure_text(config)
+            self._configure_vision(config)
+            self._configure_image(config)
 
         providers = (
             list(self._providers.values())
+            + self._text_fallbacks
+            + self._vision_fallbacks
             + self._image_gen_fallbacks
         )
         for provider in {
@@ -61,6 +76,75 @@ class CompositeProvider(ModelProvider):
             provider.set_circuit_hook(
                 self._record_provider_circuit_open
             )
+
+    def _configure_route_table(self, routes: dict) -> None:
+        route_names = {
+            "text": ("text", self._text_fallbacks),
+            "vision": ("vision", self._vision_fallbacks),
+            "image": ("image_gen", self._image_gen_fallbacks),
+        }
+        for operation, (provider_key, fallbacks) in route_names.items():
+            items = routes.get(operation)
+            if not isinstance(items, list) or not items:
+                raise ValueError(f"模型线路缺少 {operation}")
+            providers = [
+                self._build_route_provider(operation, item)
+                for item in items
+            ]
+            self._providers[provider_key] = providers[0]
+            fallbacks.extend(providers[1:])
+
+    def _build_route_provider(
+        self,
+        operation: str,
+        route: dict,
+    ) -> ModelProvider:
+        provider = str(route.get("provider") or "").strip().lower()
+        api_key = str(route.get("api_key") or "")
+        base_url = str(route.get("base_url") or "")
+        model = str(route.get("model") or "")
+        credential = str(route.get("credential") or "")
+        if not api_key:
+            raise ValueError(
+                f"{operation} 线路凭据未配置: {credential or '<empty>'}"
+            )
+        if operation == "text" and provider == "deepseek":
+            return DeepSeekProvider(
+                api_key,
+                base_url=base_url,
+                model=model,
+                fallback_model="",
+            )
+        if operation == "vision" and provider == "ollama":
+            return OllamaVisionProvider(
+                api_key,
+                base_url=base_url,
+                model=model,
+            )
+        if provider == "agnes":
+            kwargs = {
+                "base_url": base_url,
+                "congestion_policy": self._agnes_congestion_policy,
+            }
+            if operation == "text":
+                kwargs["text_model"] = model
+            elif operation == "vision":
+                kwargs["text_model"] = model
+                kwargs["vision_model"] = model
+            elif operation == "image":
+                kwargs["image_model"] = model
+            else:
+                raise ValueError(f"不支持的模型操作: {operation}")
+            return AgnesProvider(api_key, **kwargs)
+        if operation == "image" and provider == "gpt":
+            return GPTImageProvider(
+                api_key,
+                base_url=base_url,
+                image_model=model,
+            )
+        raise ValueError(
+            f"{operation} 不支持模型提供商: {provider or '<empty>'}"
+        )
 
     def _configure_text(self, config: dict) -> None:
         provider = str(
@@ -140,9 +224,6 @@ class CompositeProvider(ModelProvider):
             "gpt_image_model",
             GPTImageProvider.IMAGE_MODEL,
         )
-        self._fallback_image_gen = None
-        self._image_gen_fallbacks: list[ModelProvider] = []
-
         def agnes(model: str) -> AgnesProvider:
             return AgnesProvider(
                 agnes_key,
@@ -377,16 +458,27 @@ class CompositeProvider(ModelProvider):
             result_key = "successes" if success else "failures"
             route_metrics[result_key] += 1
 
-    def _call(self, operation: str, fn, *args, **kwargs):
+    def _call(
+        self,
+        operation: str,
+        fn,
+        *args,
+        use_circuit: bool = True,
+        **kwargs,
+    ):
         started = time.perf_counter()
-        if self._is_circuit_open(operation):
+        if use_circuit and self._is_circuit_open(operation):
             self._record_logical_call(
                 operation,
                 0.0,
                 False,
                 circuit_open=True,
             )
-            return None
+            raise ProviderCircuitOpenError(
+                "模型线路熔断冷却中，当前任务应稍后续跑",
+                provider=self._provider_name(operation),
+                operation=operation,
+            )
         success = False
         terminal = False
         error_type = None
@@ -395,7 +487,10 @@ class CompositeProvider(ModelProvider):
             success = result is not None and result != ""
             return result
         except ProviderError as exc:
-            terminal = not exc.retryable
+            terminal = isinstance(
+                exc,
+                (ProviderAuthError, ProviderQuotaError),
+            )
             error_type = type(exc).__name__
             raise
         finally:
@@ -406,11 +501,12 @@ class CompositeProvider(ModelProvider):
                 success,
                 error_type=error_type,
             )
-            self._record_circuit_result(
-                operation,
-                success,
-                terminal=terminal,
-            )
+            if use_circuit:
+                self._record_circuit_result(
+                    operation,
+                    success,
+                    terminal=terminal,
+                )
 
     def metrics_snapshot(self) -> dict:
         with self._metrics_lock:
@@ -478,40 +574,96 @@ class CompositeProvider(ModelProvider):
         max_tokens: int = 2048,
         **kwargs,
     ) -> Optional[str]:
-        return self._call(
-            "text",
-            self._providers["text"].call_text,
-            prompt,
-            max_tokens,
-            **kwargs,
-        )
+        def call_with_fallbacks():
+            return self._call_provider_chain(
+                [self._providers["text"], *self._text_fallbacks],
+                "call_text",
+                prompt,
+                max_tokens,
+                **kwargs,
+            )
+
+        return self._call("text", call_with_fallbacks)
 
     def call_vision(
         self,
         image_url: str,
         **kwargs,
     ) -> Optional[bool]:
-        return self._call(
-            "vision",
-            self._providers["vision"].call_vision,
-            image_url,
-            **kwargs,
-        )
+        def call_with_fallbacks():
+            return self._call_provider_chain(
+                [self._providers["vision"], *self._vision_fallbacks],
+                "call_vision",
+                image_url,
+                **kwargs,
+            )
+
+        return self._call("vision", call_with_fallbacks)
 
     def assess_image(
         self,
         image_url: str,
         *,
         confirmation: bool = False,
+        policy: str = "general",
         **kwargs,
     ) -> Optional[dict]:
-        return self._call(
-            "vision",
-            self._providers["vision"].assess_image,
-            image_url,
-            confirmation=confirmation,
-            **kwargs,
-        )
+        def call_with_fallbacks():
+            return self._call_provider_chain(
+                [self._providers["vision"], *self._vision_fallbacks],
+                "assess_image",
+                image_url,
+                confirmation=confirmation,
+                policy=policy,
+                **kwargs,
+            )
+
+        return self._call("vision", call_with_fallbacks)
+
+    def assess_images(
+        self,
+        image_urls: list[str],
+        *,
+        policy: str = "general",
+        **kwargs,
+    ) -> Optional[list[dict]]:
+        def call_with_fallbacks():
+            return self._call_provider_chain(
+                [self._providers["vision"], *self._vision_fallbacks],
+                "assess_images",
+                image_urls,
+                policy=policy,
+                **kwargs,
+            )
+
+        return self._call("vision", call_with_fallbacks)
+
+    def _call_provider_chain(
+        self,
+        providers: list[ModelProvider],
+        method_name: str,
+        *args,
+        **kwargs,
+    ):
+        last_error: ProviderError | None = None
+        for index, provider in enumerate(providers):
+            is_fallback = index > 0
+            try:
+                result = getattr(provider, method_name)(*args, **kwargs)
+            except ProviderError as exc:
+                if is_fallback:
+                    self._record_fallback(provider, success=False)
+                last_error = exc
+                continue
+            if result is not None and result != "":
+                if is_fallback:
+                    self._record_fallback(provider, success=True)
+                return result
+            if is_fallback:
+                self._record_fallback(provider, success=False)
+        if last_error is not None:
+            raise last_error
+        return None
 
     def call_image_gen(
         self,
@@ -519,7 +671,7 @@ class CompositeProvider(ModelProvider):
         size: str = "1024x1024",
         is_variant: bool = False,
         context: str = "",
-        route_offset: int = 0,
+        route_offset: int | None = None,
         **kwargs,
     ) -> Optional[str]:
         def call_with_fallbacks():
@@ -533,11 +685,18 @@ class CompositeProvider(ModelProvider):
                 and self._fallback_image_gen not in providers
             ):
                 providers.append(self._fallback_image_gen)
-            start_index = max(
-                0,
-                min(int(route_offset or 0), len(providers)),
-            )
-            for index, provider in list(enumerate(providers))[start_index:]:
+            indexed_providers = list(enumerate(providers))
+            if route_offset is None:
+                selected_providers = indexed_providers
+            else:
+                start_index = max(
+                    0,
+                    min(int(route_offset), len(providers)),
+                )
+                selected_providers = indexed_providers[
+                    start_index:start_index + 1
+                ]
+            for index, provider in selected_providers:
                 is_fallback = index > 0
                 try:
                     result = provider.call_image_gen(
@@ -571,4 +730,8 @@ class CompositeProvider(ModelProvider):
                 raise last_error
             return None
 
-        return self._call("image_gen", call_with_fallbacks)
+        return self._call(
+            "image_gen",
+            call_with_fallbacks,
+            use_circuit=route_offset is None,
+        )

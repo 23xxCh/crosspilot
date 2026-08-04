@@ -5,13 +5,19 @@ import hashlib
 from pathlib import Path
 
 from .config.env import load_config
+from .config.locking import processing_lock
 from .delivery import deliver
 from .images.gate import run_structured_image_safety_gate
 from .log import log as _log, new_request_id
 from .providers import get_provider, reload_provider
+from .policy import enforce_prohibited_listing_terms
 from .runtime import RunContext, RunResult
 from .schema import load_rows, validate_input_rows
-from .text.descriptions import clean_descriptions, remove_dirty_descriptions
+from .text.descriptions import (
+    clean_descriptions,
+    enforce_description_safety,
+    partition_product_description_rows,
+)
 from .text.listing import generate_bullets_keywords
 from .text.titles import optimize_titles
 
@@ -28,8 +34,35 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _partition_rows_without_attachments(
+    rows: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """Remove products that have no usable attachment after image review."""
+    retained = []
+    rejected = []
+    for row in rows:
+        if row.get("extra_imgs"):
+            retained.append(row)
+            continue
+        rejected.append({
+            "product_id": str(row.get("id") or ""),
+            "title": str(row.get("title") or ""),
+            "code": "missing_safe_attachments",
+            "message": (
+                "风险附图删除后没有可用附图，商品已从正式回填表删除"
+            ),
+        })
+    return retained, rejected
+
+
 def process_json(input_path: str | Path) -> RunResult:
     """Process one Amazon JSON collection table and publish formal artifacts."""
+    with processing_lock():
+        return _process_json_unlocked(input_path)
+
+
+def _process_json_unlocked(input_path: str | Path) -> RunResult:
+    """Run with an exclusive configuration snapshot for the whole task."""
     source = Path(input_path).expanduser().resolve()
     if source.suffix.lower() != ".json":
         raise ValueError("仅支持 Amazon JSON 采集表")
@@ -70,7 +103,17 @@ def process_json(input_path: str | Path) -> RunResult:
         ),
     )
     validate_input_rows(rows)
-    context.data = rows
+    context.data, description_rejected = (
+        partition_product_description_rows(rows)
+    )
+    context.runtime_metrics["description_rejected_products"] = (
+        description_rejected
+    )
+    problem_product_ids = [
+        str(item.get("product_id") or "")
+        for item in description_rejected
+        if str(item.get("product_id") or "")
+    ]
 
     cache_path = (
         RUNTIME_ROOT
@@ -86,6 +129,20 @@ def process_json(input_path: str | Path) -> RunResult:
         runtime_metrics=context.runtime_metrics,
         provider_getter=get_provider,
     )
+    context.data, attachment_rejected = (
+        _partition_rows_without_attachments(context.data)
+    )
+    context.runtime_metrics["attachment_rejected_products"] = (
+        attachment_rejected
+    )
+    problem_product_ids = list(dict.fromkeys([
+        *problem_product_ids,
+        *(
+            str(item.get("product_id") or "")
+            for item in attachment_rejected
+            if str(item.get("product_id") or "")
+        ),
+    ]))
     context.transform(
         "标题优化",
         optimize_titles,
@@ -102,16 +159,11 @@ def process_json(input_path: str | Path) -> RunResult:
         provider_getter=get_provider,
     )
 
-    context.data, dirty_ids = remove_dirty_descriptions(context.data)
-    quarantined_ids = [
-        str(item.get("product_id") or "")
-        for item in context.runtime_metrics.get("quarantined_products") or []
-        if str(item.get("product_id") or "")
-    ]
-    problem_ids = list(dict.fromkeys([*quarantined_ids, *dirty_ids]))
+    context.data = enforce_description_safety(context.data)
+    context.data = enforce_prohibited_listing_terms(context.data)
     result = deliver(
         context,
-        additional_problem_ids=problem_ids,
+        problem_product_ids=problem_product_ids,
     )
     print(f"回填表: {result.output_path}", flush=True)
     print(f"终审包: {result.review_path}", flush=True)

@@ -207,5 +207,7 @@ class DeepSeekProvider(ModelProvider):
         is_variant: bool = False,
         context: str = "",
         route_offset: int = 0,
+        reference_free: bool = False,
     ) -> Optional[str]:
+        del reference_free
         return None

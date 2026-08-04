@@ -31,6 +31,7 @@ def test_quality_interface_deduplicates_issue_and_records_audit() -> None:
 def test_quality_interface_accepts_complete_listing_row() -> None:
     row = {
         "title": "Generic Stainless Trailer Hitch Lock 2 Pack",
+        "subtitle": "Corrosion resistant finish, receiver installation",
         "desc": (
             "Stainless steel trailer lock with corrosion resistance "
             "and simple receiver installation."
@@ -58,3 +59,18 @@ def test_quality_interface_accepts_complete_listing_row() -> None:
         "issues": [],
         "truncated": False,
     }
+
+
+def test_quality_rejects_invalid_subtitle_shape() -> None:
+    row = {
+        "title": "Generic Product",
+        "subtitle": "Best Seller! Free shipping.",
+        "desc": "Generic product with useful product details.",
+        "main_img": "https://img.example/main.jpg",
+        "bullets": ["Useful product detail"] * 5,
+        "keywords": "product one, product two",
+    }
+
+    result = amazon_quality.validate_amazon_rows([row])
+
+    assert any("副标题" in issue for issue in result["issues"])

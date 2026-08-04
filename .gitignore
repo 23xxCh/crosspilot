@@ -13,14 +13,19 @@ __pycache__/
 
 # Runtime and delivery
 .runtime/
-输出/
+02_处理结果/
+审核后/
 *.log
 
 # Local source data
-亚马逊表/
+01_输入采集表/
 跨境电商自动化采集表*.json
 
+# Local AI models
+04_本地模型/
+
 # Local tools
+.codegraph/
 .claude/
 .context/
 .scratch/
@@ -30,3 +35,4 @@ __pycache__/
 # Removed build artifacts
 build/
 dist/
+*.zip

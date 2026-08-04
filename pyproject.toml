@@ -20,7 +20,7 @@ dev = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-norecursedirs = [".git", ".runtime", "输出"]
+norecursedirs = [".git", ".runtime", "02_处理结果"]
 markers = [
     "network: tests that need API keys and internet access",
     "slow: tests that take more than 10 seconds",

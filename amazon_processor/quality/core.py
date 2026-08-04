@@ -1,15 +1,43 @@
 """Amazon text-quality rules, normalization, auditing, and validation."""
 from __future__ import annotations
 import re
-from ..policy import compile_brand_pattern
+from ..policy import PROHIBITED_LISTING_TERMS_RE, compile_brand_pattern
 BRAND_RE = compile_brand_pattern()
 OEM_RE = re.compile('\\b(OEM|Original|Factory|原厂|原装|正品|Genuine)\\b', re.IGNORECASE)
 LOGISTICS_RE = re.compile('(交货时间|发货时间|运输方式|快递|物流|Shipping|Delivery|Express|Freight|Carrier)[：:].*?(?=\\n|$)', re.IGNORECASE)
 RETURN_RE = re.compile('(退货|退款|Return|Refund|Warranty|保修|Payment|支付).*?(?=\\n|$)', re.IGNORECASE)
 IMG_RE = re.compile('<img[^>]*>', re.IGNORECASE)
 META_TEXT_RE = re.compile('(as an ai|i cannot|here are|optimized title|cleaned description|bullet points|search keywords|json|markdown|rules?:|requirements?:)', re.IGNORECASE)
+CROSS_SELL_RE = re.compile(
+    r'(?:credit\s+card\s+knife|'
+    r'\b\d+(?:\.\d{1,2})?\s*usd\b|'
+    r'add\s+(?:me|us)\s+to\s+favourite|'
+    r'visit\s+(?:our|my)\s+store|'
+    r'welcome\s+to\s+my\s+store|'
+    r'please\s+contact\s+us\s+before|'
+    r'negative\s+feedback|'
+    r'payment\s+policy|shipping\s+policy|returns?\s+policy|'
+    r'terms?\s+of\s+sale|'
+    r'we\s+(?:only\s+)?accept\s+payment|'
+    r'orders?\s+processed\s+within|'
+    r'ebay\s+address(?:es)?|'
+    r'paypal)',
+    re.IGNORECASE,
+)
 STOP_TERMS = {'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'in', 'into', 'is', 'it', 'its', 'of', 'on', 'or', 'our', 'that', 'the', 'this', 'to', 'with', 'you', 'your'}
 GENERIC_TERMS = {'best', 'excellent', 'generic', 'good', 'great', 'high', 'hot', 'item', 'new', 'nice', 'perfect', 'premium', 'product', 'quality', 'sale', 'useful', 'value'}
+DOMAIN_GENERIC_TERMS = {
+    'accessories',
+    'accessory',
+    'auto',
+    'car',
+    'cars',
+    'part',
+    'parts',
+    'universal',
+    'vehicle',
+    'vehicles',
+}
 FACT_RE = re.compile('\\b(?:19|20)\\d{2}\\b|\\b\\d+(?:[./-]\\d+)?\\s*(?:mm|cm|m|inch|inches|in|ft|kg|g|lb|lbs|oz|v|volt|volts|w|watt|watts|l|ml|pcs|pc|pack|packs|piece|pieces|key|keys|pin|pins)\\b|\\b[A-Z]{1,5}\\d{1,5}[A-Z0-9-]*\\b|\\b\\d+[A-Z]{1,5}\\b', re.IGNORECASE)
 
 def plain_text(value):
@@ -67,11 +95,30 @@ def term_tokens(text):
 
 def meaningful_tokens(text):
     return [token for token in term_tokens(text) if token not in STOP_TERMS and token not in GENERIC_TERMS]
+
+def has_cross_sell_contamination(text):
+    return bool(CROSS_SELL_RE.search(plain_text(text)))
+
+def relevant_token_overlap(source, candidate):
+    source_tokens = set(meaningful_tokens(source)) - DOMAIN_GENERIC_TERMS
+    candidate_tokens = set(meaningful_tokens(candidate)) - DOMAIN_GENERIC_TERMS
+    if not source_tokens or not candidate_tokens:
+        return set()
+    return source_tokens & candidate_tokens
+
+def is_text_relevant(source, candidate):
+    candidate_text = plain_text(candidate)
+    if not candidate_text or has_cross_sell_contamination(candidate_text):
+        return False
+    source_tokens = set(meaningful_tokens(source)) - DOMAIN_GENERIC_TERMS
+    if not source_tokens:
+        return True
+    return bool(relevant_token_overlap(source, candidate_text))
 import re
-ROW_QUALITY_LABELS = {'missing_source_description': '源产品描述缺失', 'title_ai_fallback': '标题 AI 优化降级为规则处理', 'title_fact_loss': '标题关键规格可能丢失', 'description_ai_fallback': '描述 AI 清洗降级为规则处理', 'description_fact_loss': '描述关键规格可能丢失', 'bullet_rule_fallback': 'Bullet/关键词由规则补全', 'bullet_quality_warning': 'Bullet 内容质量需要复核', 'keyword_quality_warning': '关键词内容质量需要复核', 'main_image_generation_failed': '风险主图生成失败并保留原图', 'variant_image_generation_failed': '风险变种图生成失败并保留原图'}
+ROW_QUALITY_LABELS = {'missing_source_description': '源产品描述缺失', 'title_ai_fallback': '标题 AI 优化降级为规则处理', 'title_fact_loss': '标题关键规格可能丢失', 'description_ai_fallback': '描述 AI 清洗降级为规则处理', 'description_fact_loss': '描述关键规格可能丢失', 'description_relevance_warning': '描述相关性需要复核', 'description_compacted': '描述因 500 字符限制被压缩', 'bullet_rule_fallback': 'Bullet/关键词由规则补全', 'bullet_quality_warning': 'Bullet 内容质量需要复核', 'keyword_quality_warning': '关键词内容质量需要复核', 'subtitle_quality_warning': '副标题内容质量需要复核', 'main_image_generation_failed': '风险主图生成失败并保留原图', 'variant_image_generation_failed': '风险变种图生成失败并保留原图'}
 MAX_ROW_AUDIT_ITEMS = 20
 MAX_VALIDATION_AUDIT_ITEMS = 120
-ISSUE_AUDIT_META = {'missing_source_description': ('读取表格', 'description', 'review'), 'title_ai_fallback': ('标题优化', 'title', 'fallback'), 'title_fact_loss': ('标题优化', 'title', 'review'), 'description_ai_fallback': ('描述清洗', 'description', 'fallback'), 'description_fact_loss': ('描述清洗', 'description', 'review'), 'bullet_rule_fallback': ('Bullet+关键词', 'Bullet', 'fallback'), 'bullet_quality_warning': ('Bullet+关键词', 'Bullet', 'review'), 'keyword_quality_warning': ('Bullet+关键词', 'keywords', 'review')}
+ISSUE_AUDIT_META = {'missing_source_description': ('读取表格', 'description', 'review'), 'title_ai_fallback': ('标题优化', 'title', 'fallback'), 'title_fact_loss': ('标题优化', 'title', 'review'), 'description_ai_fallback': ('描述清洗', 'description', 'fallback'), 'description_fact_loss': ('描述清洗', 'description', 'review'), 'description_relevance_warning': ('描述清洗', 'description', 'review'), 'description_compacted': ('描述清洗', 'description', 'review'), 'bullet_rule_fallback': ('Bullet+关键词', 'Bullet', 'fallback'), 'bullet_quality_warning': ('Bullet+关键词', 'Bullet', 'review'), 'keyword_quality_warning': ('Bullet+关键词', 'keywords', 'review'), 'subtitle_quality_warning': ('副标题', 'subtitle', 'review')}
 
 def audit_text(value, limit=180):
     if isinstance(value, (list, tuple)):
@@ -171,8 +218,11 @@ def normalize_bullets_for_row(row):
     raw_bullets.extend([''] * (5 - len(raw_bullets)))
     seen = set()
     normalized = []
+    source_text = f"{row.get('title', '')}. {row.get('desc', '')}"
     for raw in raw_bullets[:5]:
         bullet = clean_bullet_text(str(raw or ''))
+        if bullet and not is_text_relevant(source_text, bullet):
+            bullet = ''
         fingerprint = fingerprint_text(bullet)
         if bullet and (fingerprint in seen or is_weak_bullet(bullet)):
             bullet = ''
@@ -261,7 +311,12 @@ def join_keywords(terms, limit=250):
 
 def normalize_keywords_for_row(row):
     original_terms = split_keywords(row.get('keywords', ''))
-    cleaned_original = dedupe_terms(original_terms)
+    source_text = f"{row.get('title', '')}. {row.get('desc', '')}"
+    cleaned_original = [
+        term
+        for term in dedupe_terms(original_terms)
+        if is_text_relevant(source_text, term)
+    ]
     candidates = keyword_candidates_from_source(row)
     terms = dedupe_terms(cleaned_original + candidates)
     normalized = join_keywords(terms)
@@ -279,16 +334,42 @@ def validate_amazon_rows(rows, extra_issues=None, row_offset=0):
         row_number = row_offset + index
         label = f'第 {row_number} 行'
         title = str(row.get('title') or '').strip()
+        subtitle = str(row.get('subtitle') or '').strip()
         description = plain_text(row.get('desc') or '')
         main_image = str(row.get('main_img') or '').strip()
         bullets = [str(item or '').strip() for item in list(row.get('bullets') or [])[:5]]
         bullets.extend([''] * (5 - len(bullets)))
         keywords = str(row.get('keywords') or '').strip()
         keyword_terms = dedupe_terms(split_keywords(keywords))
+        if any(
+            PROHIBITED_LISTING_TERMS_RE.search(value)
+            for value in [title, subtitle, description, *bullets, keywords]
+        ):
+            issues.append(f'{label}文案含平台违规词')
         if not title or len(title) > 75 or META_TEXT_RE.search(title):
             issues.append(f'{label}标题为空、超过 75 字符或疑似模型说明文本')
-        if not description or BRAND_RE.search(description) or OEM_RE.search(description) or META_TEXT_RE.search(description):
-            issues.append(f'{label}描述为空、含品牌残留或疑似模型说明文本')
+        if len(title) >= 75 and subtitle:
+            issues.append(f'{label}标题达到 75 字符时副标题必须为空')
+        if subtitle:
+            if len(subtitle) > 125:
+                issues.append(f'{label}副标题超过 125 字符')
+            if re.search('[.!?;:：；！。？]', subtitle):
+                issues.append(f'{label}副标题应使用逗号分隔短语，不能写完整句')
+            if re.search('[^A-Za-z0-9 ,]', subtitle):
+                issues.append(f'{label}副标题含特殊符号')
+            if re.search(
+                '\\b(best\\s*seller|free\\s*shipping|discount|promotion|promo|hot\\s*sale|limited\\s*time)\\b',
+                subtitle,
+                re.IGNORECASE,
+            ):
+                issues.append(f'{label}副标题含主观评价或促销词')
+            subtitle_terms = [
+                term for term in split_keywords(subtitle) if term
+            ]
+            if not subtitle_terms:
+                issues.append(f'{label}副标题格式无有效短语')
+        if not description or len(str(row.get('desc') or '')) > 500 or BRAND_RE.search(description) or OEM_RE.search(description) or META_TEXT_RE.search(description) or has_cross_sell_contamination(description) or not is_text_relevant(title, description):
+            issues.append(f'{label}描述为空、超过 500 字符、与标题无关或含脏文案')
         if not re.match('^https?://', main_image, re.IGNORECASE):
             issues.append(f'{label}主图 URL 无效')
         non_empty_bullets = [bullet for bullet in bullets if bullet]
@@ -301,13 +382,13 @@ def validate_amazon_rows(rows, extra_issues=None, row_offset=0):
             issues.append(f'{label} Bullet 超过 200 字符')
         if any((BRAND_RE.search(bullet) or OEM_RE.search(bullet) for bullet in non_empty_bullets)):
             issues.append(f'{label} Bullet 含品牌或 OEM 残留')
-        if any((is_weak_bullet(bullet) for bullet in non_empty_bullets)):
+        if any((is_weak_bullet(bullet) or has_cross_sell_contamination(bullet) or not is_text_relevant(f'{title}. {description}', bullet) for bullet in non_empty_bullets)):
             issues.append(f'{label} Bullet 过泛，缺少可检索的产品信息')
         if len(keyword_terms) != 10:
             issues.append(f'{label}关键词需为 10 个有效搜索词')
         if keywords and len(keywords) > 250:
             issues.append(f'{label}关键词超过 250 字符')
-        if BRAND_RE.search(keywords) or len(keyword_terms) != len(split_keywords(keywords)):
+        if BRAND_RE.search(keywords) or has_cross_sell_contamination(keywords) or len(keyword_terms) != len(split_keywords(keywords)):
             issues.append(f'{label}关键词为空、重复、过泛或含品牌')
         if len(issues) >= 20:
             break

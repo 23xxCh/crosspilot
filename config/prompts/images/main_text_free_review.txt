@@ -1,0 +1,21 @@
+Inspect this MAIN product image for a strict zero-text policy. Return exactly
+one JSON object:
+{
+  "status": "safe" | "risk" | "unknown",
+  "reasons": ["visible_text"],
+  "placement": "none" | "overlay" | "product_surface" | "packaging" | "background" | "unknown",
+  "detected_text": ["visible words, if any"],
+  "confidence": 0.0,
+  "evidence": "short factual visual evidence"
+}
+
+Return risk when ANY visible or text-like content exists anywhere in the main
+image, regardless of language or purpose. This includes letters, words,
+numbers, dimensions, model numbers, specifications, labels, packaging text,
+watermarks, brand names, logos containing text, QR codes, and malformed or
+pseudo-text. Product-surface printing and useful English specifications still
+count as visible text and must return risk.
+
+Return safe only when no visible text or text-like content exists. Ordinary
+non-text pictograms and purely decorative shapes may remain. Return unknown
+when image quality prevents a reliable decision. Output JSON only.

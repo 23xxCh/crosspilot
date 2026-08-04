@@ -1,24 +1,60 @@
 {
-  "version": 1,
+  "version": 2,
+  "credentials": {
+    "deepseek_main": {
+      "label": "DeepSeek 主线路",
+      "env": "DEEPSEEK_KEY"
+    },
+    "agnes_main": {
+      "label": "Agnes 主线路",
+      "env": "AGNES_KEY"
+    },
+    "gpt_image_proxy": {
+      "label": "GPT Image 中转线路",
+      "env": "GPT_IMAGE_KEY"
+    }
+  },
   "active_profile": "production",
   "profiles": {
     "production": {
       "text": {
         "provider": "deepseek",
+        "credential": "deepseek_main",
         "base_url": "https://api.deepseek.com",
         "model": "deepseek-v4-flash",
-        "fallback_models": [
-          "deepseek-v4-pro"
+        "fallbacks": [
+          {
+            "provider": "deepseek",
+            "credential": "deepseek_main",
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-v4-pro"
+          }
         ]
       },
       "vision": {
         "provider": "agnes",
-        "base_url": "https://apihub.agnes-ai.com",
-        "model": "agnes-2.0-flash"
+        "credential": "agnes_main",
+        "base_url": "https://apihub.agnes-ai.cn",
+        "model": "agnes-2.0-flash",
+        "fallbacks": [
+          {
+            "provider": "ollama",
+            "credential": "agnes_main",
+            "base_url": "http://127.0.0.1:11434",
+            "model": "qwen3-vl:4b-instruct-q4_K_M"
+          },
+          {
+            "provider": "agnes",
+            "credential": "agnes_main",
+            "base_url": "https://apihub.agnes-ai.cn",
+            "model": "agnes-2.5-flash"
+          }
+        ]
       },
       "image": {
         "provider": "agnes",
-        "base_url": "https://apihub.agnes-ai.com",
+        "credential": "agnes_main",
+        "base_url": "https://apihub.agnes-ai.cn",
         "model": "agnes-image-2.1-flash",
         "params": {
           "size": "1K",
@@ -27,11 +63,13 @@
         "fallbacks": [
           {
             "provider": "agnes",
-            "base_url": "https://apihub.agnes-ai.com",
+            "credential": "agnes_main",
+            "base_url": "https://apihub.agnes-ai.cn",
             "model": "agnes-image-2.0-flash"
           },
           {
             "provider": "gpt",
+            "credential": "gpt_image_proxy",
             "base_url": "https://www.hfsyapi.cn",
             "model": "gpt-image-2"
           }
@@ -41,8 +79,9 @@
   },
   "runtime": {
     "text_concurrency": 100,
-    "review_concurrency": 30,
-    "image_concurrency": 20,
+    "review_concurrency": 15,
+    "review_batch_size": 3,
+    "image_concurrency": 4,
     "max_rows": 0,
     "max_input_rows": 10000,
     "agnes_503_retry_limit": 1,
@@ -51,6 +90,7 @@
     "agnes_503_circuit_threshold": 3,
     "agnes_503_circuit_cooldown_s": 120,
     "image_regeneration_routes": 2,
+    "generated_image_review_mode": "human_review",
     "adaptive_failure_rate": 0.25,
     "adaptive_recovery_batches": 3,
     "circuit_failure_threshold": 8,

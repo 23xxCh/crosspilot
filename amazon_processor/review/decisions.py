@@ -2,6 +2,7 @@
 """Validate and apply decisions exported by an Amazon final-review package."""
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 import json
 import os
@@ -9,7 +10,7 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-from ..images.risk import validate_image_url
+from ..images.risk import unknown_image_assessment, validate_image_url
 from ..providers import get_provider, reload_provider
 from ..schema import (
     AMAZON_JSON_OUTPUT_FIELDS,
@@ -24,6 +25,7 @@ ALLOWED_ACTIONS = {
     "delete_product",
     "delete_image",
     "regenerate_image",
+    "reorder_images",
     "false_positive",
 }
 
@@ -107,17 +109,10 @@ def _row_index(payload: dict, product_id: str) -> int:
 
 
 def _remove_row(payload: dict, index: int) -> None:
-    removed_id = str(payload["商品id"][index])
     for field in AMAZON_JSON_OUTPUT_FIELDS:
         if field == "有问题的产品id":
             continue
         del payload[field][index]
-    problem_ids = [
-        str(value) for value in payload["有问题的产品id"]
-    ]
-    if removed_id not in problem_ids:
-        problem_ids.append(removed_id)
-    payload["有问题的产品id"] = problem_ids
 
 
 def _regenerate_safe_image(
@@ -132,7 +127,7 @@ def _regenerate_safe_image(
         generated = str(
             provider.call_image_gen(
                 source_url,
-                is_variant=role == "variant",
+                is_variant=role in {"variant", "attachment"},
                 context="",
                 route_offset=route_offset,
             )
@@ -142,20 +137,11 @@ def _regenerate_safe_image(
         if not valid:
             last_reason = reason
             continue
-        assessment = provider.assess_image(generated)
-        if (
-            isinstance(assessment, dict)
-            and assessment.get("status") == "safe"
-        ):
-            return generated, assessment
-        last_reason = (
-            "generated_image_"
-            + str(
-                (assessment or {}).get("status")
-                if isinstance(assessment, dict)
-                else "unknown"
-            )
+        assessment = unknown_image_assessment(
+            "generated image accepted for human review without machine recheck"
         )
+        assessment["accepted_without_machine_review"] = True
+        return generated, assessment
     raise ValueError(
         f"图片重新生成后未通过安全复审: {last_reason}"
     )
@@ -195,11 +181,29 @@ def _validate_decisions(value: dict) -> list[dict]:
             raise ValueError(
                 f"第 {index} 条图片决定缺少 image_url"
             )
+        image_urls = item.get("image_urls") or []
+        if action == "reorder_images":
+            if role != "product_images":
+                raise ValueError(
+                    "reorder_images 的 role 必须是 product_images"
+                )
+            if not isinstance(image_urls, list) or not image_urls:
+                raise ValueError(
+                    f"第 {index} 条排序决定缺少 image_urls"
+                )
+            image_urls = [str(url or "").strip() for url in image_urls]
+            if any(not url for url in image_urls):
+                raise ValueError(
+                    f"第 {index} 条排序决定包含空图片 URL"
+                )
+        else:
+            image_urls = []
         normalized.append({
             "product_id": product_id,
             "action": action,
             "role": role,
             "image_url": image_url,
+            "image_urls": image_urls,
             "note": str(item.get("note") or ""),
             "recorded_at": str(item.get("recorded_at") or ""),
         })
@@ -211,6 +215,7 @@ def _update_review_package(
     decisions: list[dict],
     *,
     application_report: dict,
+    formal_payload: dict,
 ) -> None:
     data_path = package_dir / "审核数据.json"
     if not data_path.exists():
@@ -227,11 +232,69 @@ def _update_review_package(
         if item["action"] == "delete_product"
     }
     for decision in decisions:
+        if decision["action"] != "reorder_images":
+            continue
+        product = product_map.get(decision["product_id"])
+        if not product:
+            continue
+        product_images = [
+            image
+            for image in product.get("images") or []
+            if image.get("role_key") in {"main", "attachment"}
+        ]
+        other_images = [
+            image
+            for image in product.get("images") or []
+            if image.get("role_key") not in {"main", "attachment"}
+        ]
+        buckets: dict[str, list[dict]] = {}
+        for image in product_images:
+            buckets.setdefault(str(image.get("url") or ""), []).append(image)
+        reordered = []
+        for position, url in enumerate(decision["image_urls"]):
+            matches = buckets.get(url) or []
+            if not matches:
+                continue
+            image = matches.pop(0)
+            image["role_key"] = "main" if position == 0 else "attachment"
+            image["role"] = "主图" if position == 0 else f"附图 {position}"
+            image["position"] = position
+            reordered.append(image)
+        product["images"] = [*reordered, *other_images]
+    for decision in decisions:
         product = product_map.get(decision["product_id"])
         if not product:
             continue
         if decision["role"] == "product":
             product["decision"] = decision
+            continue
+        if decision["action"] == "reorder_images":
+            product["image_order_decision"] = decision
+            continue
+        if decision["action"] == "delete_image":
+            product["images"] = [
+                image
+                for image in product.get("images") or []
+                if not (
+                    image.get("role_key") == decision["role"]
+                    and image.get("url") == decision["image_url"]
+                )
+            ]
+            product_images = [
+                image
+                for image in product.get("images") or []
+                if image.get("role_key") in {"main", "attachment"}
+            ]
+            other_images = [
+                image
+                for image in product.get("images") or []
+                if image.get("role_key") not in {"main", "attachment"}
+            ]
+            for position, image in enumerate(product_images):
+                image["role_key"] = "main" if position == 0 else "attachment"
+                image["role"] = "主图" if position == 0 else f"附图 {position}"
+                image["position"] = position
+            product["images"] = [*product_images, *other_images]
             continue
         for image in product.get("images") or []:
             if (
@@ -239,8 +302,6 @@ def _update_review_package(
                 and image.get("url") == decision["image_url"]
             ):
                 image["decision"] = decision
-                if decision["action"] == "delete_image":
-                    image["applied"] = "deleted"
                 break
     review_data["applied_decisions"] = decisions
     review_data["products"] = [
@@ -249,13 +310,61 @@ def _update_review_package(
         if str(item.get("product_id") or "")
         not in deleted_products
     ]
+    for row_number, product in enumerate(
+        review_data["products"],
+        start=1,
+    ):
+        product["row"] = row_number
+
+    referenced_urls = {
+        str(url)
+        for product in review_data["products"]
+        for image in (product.get("images") or [])
+        for url in (image.get("url"), image.get("source_url"))
+        if str(url or "")
+    }
+    image_mapping = review_data.get("images")
+    if isinstance(image_mapping, dict):
+        review_data["images"] = {
+            url: item
+            for url, item in image_mapping.items()
+            if url in referenced_urls
+        }
+
     summary = review_data.get("summary") or {}
+    released_products = sum(
+        not bool(item.get("quarantined"))
+        for item in review_data["products"]
+    )
+    quarantined_products = (
+        len(review_data["products"]) - released_products
+    )
+    image_occurrences = sum(
+        len(item.get("images") or [])
+        for item in review_data["products"]
+    )
+    downloaded_urls = {
+        str(image.get("url") or "")
+        for product in review_data["products"]
+        for image in (product.get("images") or [])
+        if image.get("download_ok") is True
+        and str(image.get("url") or "")
+    }
     summary["products"] = len(review_data["products"])
+    summary["released_products"] = released_products
+    summary["quarantined_products"] = quarantined_products
+    summary["image_occurrences"] = image_occurrences
+    summary["unique_images"] = len(referenced_urls)
+    summary["downloaded_unique_images"] = len(downloaded_urls)
     review_data["summary"] = summary
     review_data["application_report"] = application_report
     _atomic_json(data_path, review_data)
     (package_dir / "终审包.html").write_text(
-        render_html(review_data["products"], summary),
+        render_html(
+            review_data["products"],
+            summary,
+            formal_payload=formal_payload,
+        ),
         encoding="utf-8",
     )
 
@@ -288,6 +397,14 @@ def apply_decisions(
     formal_ids = {
         str(value) for value in payload["商品id"]
     }
+    reorder_by_product: dict[str, list[str]] = {}
+    for item in decisions:
+        if item["action"] != "reorder_images":
+            continue
+        product_id = item["product_id"]
+        if product_id in reorder_by_product:
+            raise ValueError(f"商品 {product_id} 存在重复图片排序决定")
+        reorder_by_product[product_id] = item["image_urls"]
     delete_product_ids = {
         item["product_id"]
         for item in decisions
@@ -329,8 +446,18 @@ def apply_decisions(
             continue
         index = _row_index(payload, item["product_id"])
         action = item["action"]
-        if action == "delete_image":
+        if action == "reorder_images":
             images = payload["产品图片链接"][index]
+            if Counter(item["image_urls"]) != Counter(images):
+                raise ValueError(
+                    f"商品 {item['product_id']} 的图片排序必须完整包含"
+                    "现有主图和全部附图，不能新增、遗漏或重复图片"
+                )
+        elif action == "delete_image":
+            images = reorder_by_product.get(
+                item["product_id"],
+                payload["产品图片链接"][index],
+            )
             if item["image_url"] not in images[1:]:
                 raise ValueError(
                     f"商品 {item['product_id']} 未找到指定附图，"
@@ -343,6 +470,8 @@ def apply_decisions(
                 else "变种图片链接"
             )
             images = payload[field][index]
+            if item["role"] == "main":
+                images = reorder_by_product.get(item["product_id"], images)
             if item["image_url"] not in images:
                 raise ValueError(
                     f"商品 {item['product_id']} 的 {item['role']} "
@@ -381,12 +510,27 @@ def apply_decisions(
     for product_id in present_delete_ids:
         index = _row_index(payload, product_id)
         _remove_row(payload, index)
+    payload["有问题的产品id"] = list(dict.fromkeys([
+        *payload["有问题的产品id"],
+        *[
+            item["product_id"]
+            for item in decisions
+            if item["action"] == "delete_product"
+        ],
+    ]))
+    for product_id, image_urls in reorder_by_product.items():
+        if product_id in delete_product_ids or product_id not in formal_ids:
+            continue
+        index = _row_index(payload, product_id)
+        payload["产品图片链接"][index] = list(image_urls)
     for item in decisions:
         if item["product_id"] in delete_product_ids:
             continue
         if item["product_id"] not in formal_ids:
             continue
         index = _row_index(payload, item["product_id"])
+        if item["action"] == "reorder_images":
+            continue
         if item["action"] == "delete_image":
             images = payload["产品图片链接"][index]
             payload["产品图片链接"][index] = [
@@ -444,6 +588,7 @@ def apply_decisions(
             package_dir,
             decisions,
             application_report=report,
+            formal_payload=payload,
         )
     return report
 

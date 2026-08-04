@@ -17,7 +17,12 @@ AMAZON_JSON_INPUT_FIELDS = (
 )
 
 AMAZON_JSON_OUTPUT_FIELDS = (
-    *AMAZON_JSON_INPUT_FIELDS,
+    '商品id',
+    '产品标题',
+    '副标题',
+    '产品描述',
+    '产品图片链接',
+    '变种图片链接',
     'Bullet Point1',
     'Bullet Point2',
     'Bullet Point3',
@@ -93,6 +98,42 @@ def validate_columnar_payload(
     for field in scalar_fields:
         if any(not isinstance(value, str) for value in payload[field]):
             raise ValueError(f'Amazon JSON 字段“{field}”只能包含字符串')
+
+    product_ids = payload['商品id']
+    blank_rows = [
+        index
+        for index, product_id in enumerate(product_ids, start=1)
+        if not product_id.strip()
+    ]
+    if blank_rows:
+        raise ValueError(
+            'Amazon JSON 商品id不能为空，问题行: '
+            + ', '.join(str(index) for index in blank_rows[:20])
+        )
+
+    id_rows: dict[str, list[int]] = {}
+    for index, product_id in enumerate(product_ids, start=1):
+        id_rows.setdefault(product_id, []).append(index)
+    duplicates = [
+        f'{product_id}（第 {", ".join(map(str, rows))} 行）'
+        for product_id, rows in id_rows.items()
+        if len(rows) > 1
+    ]
+    if duplicates:
+        raise ValueError(
+            'Amazon JSON 商品id不能重复: '
+            + '；'.join(duplicates[:20])
+        )
+
+    if '有问题的产品id' in required_fields:
+        overlap = sorted(
+            set(product_ids) & set(payload['有问题的产品id'])
+        )
+        if overlap:
+            raise ValueError(
+                '有问题的产品id对应商品必须从全部逐行字段删除: '
+                + ', '.join(overlap[:20])
+            )
 
     return row_count
 
@@ -190,12 +231,21 @@ def validate_input_rows(rows: list[dict[str, Any]]) -> None:
 def build_output_payload(
     rows: list[dict],
     *,
-    additional_problem_ids: list[str] | tuple[str, ...] = (),
+    problem_product_ids: list[str] | tuple[str, ...] = (),
 ) -> dict:
     """Build the exact column order and nested image shape of the output template."""
+    normalized_problem_ids = list(
+        dict.fromkeys(
+            str(value)
+            for value in problem_product_ids
+            if str(value)
+        )
+    )
+    problem_id_set = set(normalized_problem_ids)
     payload = {
         '商品id': [],
         '产品标题': [],
+        '副标题': [],
         '产品描述': [],
         '产品图片链接': [],
         '变种图片链接': [],
@@ -207,9 +257,10 @@ def build_output_payload(
         '关键词信息': [],
         '有问题的产品id': [],
     }
-    problem_ids = []
-
     for row in rows:
+        product_id = str(row.get('id') or '')
+        if product_id in problem_id_set:
+            continue
         bullets = row.get('bullets')
         if not isinstance(bullets, list):
             bullets = []
@@ -229,31 +280,16 @@ def build_output_payload(
             if isinstance(value, str) and value.strip()
         ]
 
-        payload['商品id'].append(str(row.get('id') or ''))
+        payload['商品id'].append(product_id)
         payload['产品标题'].append(str(row.get('title') or ''))
+        payload['副标题'].append(str(row.get('subtitle') or ''))
         payload['产品描述'].append(str(row.get('desc') or ''))
         payload['产品图片链接'].append(product_images)
         payload['变种图片链接'].append(variant_images)
         for index in range(5):
             payload[f'Bullet Point{index + 1}'].append(bullets[index])
         payload['关键词信息'].append(str(row.get('keywords') or ''))
-        # Collect problem IDs
-        issues = row.get('_quality_issues', [])
-        if issues:
-            problem_ids.append(str(row.get('id') or ''))
-
-    payload["有问题的产品id"] = list(
-        dict.fromkeys(
-            [
-                *problem_ids,
-                *(
-                    str(value)
-                    for value in additional_problem_ids
-                    if str(value)
-                ),
-            ]
-        )
-    )
+    payload["有问题的产品id"] = normalized_problem_ids
     validate_columnar_payload(
         payload,
         required_fields=AMAZON_JSON_OUTPUT_FIELDS,
@@ -267,12 +303,12 @@ def write_output_json(
     rows: list[dict],
     output_path: str | os.PathLike[str],
     *,
-    additional_problem_ids: list[str] | tuple[str, ...] = (),
+    problem_product_ids: list[str] | tuple[str, ...] = (),
 ) -> str:
     """Atomically write the exact Amazon refill contract."""
     payload = build_output_payload(
         rows,
-        additional_problem_ids=additional_problem_ids,
+        problem_product_ids=problem_product_ids,
     )
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
