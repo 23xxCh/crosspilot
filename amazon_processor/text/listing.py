@@ -24,6 +24,11 @@ from ..quality import (
     plain_text as _plain_text,
 )
 from .subtitles import normalize_subtitles_for_rows
+from .locale import (
+    market_for_row,
+    market_prompt_values,
+    normalize_localized_listing_fields,
+)
 
 
 QuotaExhaustedError = ProviderQuotaError
@@ -128,6 +133,7 @@ def generate_bullets_keywords(
                     "amazon.bullet_keywords",
                     title=row["title"],
                     description=row.get("desc", "")[:500],
+                    **market_prompt_values(row),
                 ),
                 max_tokens=2048,
             )
@@ -294,8 +300,11 @@ def generate_bullets_keywords(
             row["subtitle"] = ""
         before_bullets = list(row.get("bullets") or [])
         before_keywords = row.get("keywords", "")
-        _normalize_bullets_for_row(row)
-        _normalize_keywords_for_row(row)
+        if market_for_row(row).language_code == "en":
+            _normalize_bullets_for_row(row)
+            _normalize_keywords_for_row(row)
+        else:
+            normalize_localized_listing_fields(row)
         if _audit_text(before_bullets) != _audit_text(
             row.get("bullets")
         ):
@@ -336,6 +345,7 @@ def generate_bullets_keywords(
             len(non_empty) < 5
             and row.get("title")
             and str(row.get("desc") or "").strip()
+            and market_for_row(row).language_code == "en"
         ):
             before_bullets = list(row.get("bullets") or [])
             before_keywords = row.get("keywords", "")

@@ -4,6 +4,7 @@ version = "1.0.0"
 description = "Amazon JSON 采集表核心处理器"
 requires-python = ">=3.11"
 dependencies = [
+    "langdetect>=1.0.9",
     "pillow>=10.0",
     "requests>=2.31",
 ]

@@ -331,6 +331,9 @@ def validate_amazon_rows(rows, extra_issues=None, row_offset=0):
     """Validate final rows and return a bounded review result."""
     issues = list(extra_issues or [])
     for index, row in enumerate(rows, 1):
+        from ..text.locale import market_for_row, sanitize_localized_subtitle
+
+        is_english = market_for_row(row).language_code == 'en'
         row_number = row_offset + index
         label = f'第 {row_number} 行'
         title = str(row.get('title') or '').strip()
@@ -340,7 +343,14 @@ def validate_amazon_rows(rows, extra_issues=None, row_offset=0):
         bullets = [str(item or '').strip() for item in list(row.get('bullets') or [])[:5]]
         bullets.extend([''] * (5 - len(bullets)))
         keywords = str(row.get('keywords') or '').strip()
-        keyword_terms = dedupe_terms(split_keywords(keywords))
+        raw_keyword_terms = split_keywords(keywords)
+        keyword_terms = (
+            dedupe_terms(raw_keyword_terms)
+            if is_english
+            else list(dict.fromkeys(
+                term.casefold() for term in raw_keyword_terms if term.strip()
+            ))
+        )
         if any(
             PROHIBITED_LISTING_TERMS_RE.search(value)
             for value in [title, subtitle, description, *bullets, keywords]
@@ -355,7 +365,9 @@ def validate_amazon_rows(rows, extra_issues=None, row_offset=0):
                 issues.append(f'{label}副标题超过 125 字符')
             if re.search('[.!?;:：；！。？]', subtitle):
                 issues.append(f'{label}副标题应使用逗号分隔短语，不能写完整句')
-            if re.search('[^A-Za-z0-9 ,]', subtitle):
+            if is_english and re.search('[^A-Za-z0-9 ,]', subtitle):
+                issues.append(f'{label}副标题含特殊符号')
+            if not is_english and sanitize_localized_subtitle(subtitle) != subtitle:
                 issues.append(f'{label}副标题含特殊符号')
             if re.search(
                 '\\b(best\\s*seller|free\\s*shipping|discount|promotion|promo|hot\\s*sale|limited\\s*time)\\b',
@@ -375,20 +387,27 @@ def validate_amazon_rows(rows, extra_issues=None, row_offset=0):
         non_empty_bullets = [bullet for bullet in bullets if bullet]
         if len(non_empty_bullets) < 5:
             issues.append(f'{label} Bullet 不足 5 条')
-        bullet_fingerprints = [fingerprint_text(bullet) for bullet in non_empty_bullets]
+        bullet_fingerprints = [
+            (
+                fingerprint_text(bullet)
+                if is_english
+                else ''.join(char for char in bullet.casefold() if char.isalnum())
+            )
+            for bullet in non_empty_bullets
+        ]
         if len(set(bullet_fingerprints)) < len(bullet_fingerprints):
             issues.append(f'{label} Bullet 存在重复内容')
         if any((len(bullet) > 200 for bullet in non_empty_bullets)):
             issues.append(f'{label} Bullet 超过 200 字符')
         if any((BRAND_RE.search(bullet) or OEM_RE.search(bullet) for bullet in non_empty_bullets)):
             issues.append(f'{label} Bullet 含品牌或 OEM 残留')
-        if any((is_weak_bullet(bullet) or has_cross_sell_contamination(bullet) or not is_text_relevant(f'{title}. {description}', bullet) for bullet in non_empty_bullets)):
+        if any(((is_english and is_weak_bullet(bullet)) or has_cross_sell_contamination(bullet) or not is_text_relevant(f'{title}. {description}', bullet) for bullet in non_empty_bullets)):
             issues.append(f'{label} Bullet 过泛，缺少可检索的产品信息')
         if len(keyword_terms) != 10:
             issues.append(f'{label}关键词需为 10 个有效搜索词')
         if keywords and len(keywords) > 250:
             issues.append(f'{label}关键词超过 250 字符')
-        if BRAND_RE.search(keywords) or has_cross_sell_contamination(keywords) or len(keyword_terms) != len(split_keywords(keywords)):
+        if BRAND_RE.search(keywords) or has_cross_sell_contamination(keywords) or len(keyword_terms) != len(raw_keyword_terms):
             issues.append(f'{label}关键词为空、重复、过泛或含品牌')
         if len(issues) >= 20:
             break

@@ -119,19 +119,38 @@ def compile_brand_pattern(brands=None):
     return re.compile('|'.join(parts), re.IGNORECASE)
 
 
+_BUTTON_BATTERY_PATTERN = (
+    r"(?:button\s+batter(?:y|ies)|"
+    r"(?:pila|bater[ií]a)s?\s+(?:de\s+)?bot[oó]n|"
+    r"(?:pilha|bateria)s?\s+(?:tipo\s+)?bot[aã]o|"
+    r"knopf(?:zelle|zellen|batterie|batterien)|"
+    r"pile?s?\s+bouton|"
+    r"batteri[ae]\s+a\s+bottone)"
+)
+_AUDIENCE_PATTERN = (
+    r"(?:boys?|girls?|kids|"
+    r"niñ[oa]s?|menina?s?|meninos?|crianças?|"
+    r"junge[n]?|mädchen|kinder|"
+    r"garçons?|filles?|enfants?|"
+    r"ragazz[oaie]|bambin[oaie])"
+)
 PROHIBITED_LISTING_TERMS_RE = re.compile(
-    r"\b(?:button\s+batter(?:y|ies)|boys?|girls?|kids)\b",
+    rf"\b(?:{_BUTTON_BATTERY_PATTERN}|{_AUDIENCE_PATTERN})\b",
     re.IGNORECASE,
 )
 _BUTTON_BATTERY_RE = re.compile(
-    r"\bbutton\s+batter(?:y|ies)\b",
+    rf"\b{_BUTTON_BATTERY_PATTERN}\b",
     re.IGNORECASE,
 )
 _AUDIENCE_TERM_RE = re.compile(
-    r"\b(?:boys?|girls?|kids)\b",
+    rf"\b{_AUDIENCE_PATTERN}\b",
     re.IGNORECASE,
 )
-_BATTERY_WORD_RE = re.compile(r"\bbatter(?:y|ies)\b", re.IGNORECASE)
+_BATTERY_WORD_RE = re.compile(
+    r"\b(?:batter(?:y|ies)|bater[ií]as?|pilas?|pilhas?|"
+    r"batterie[n]?|piles?)\b",
+    re.IGNORECASE,
+)
 _BATTERY_SPEC_RE = re.compile(
     r"(?:\bBattery\s*:\s*)?(?:Built[- ]?in\s+)?"
     r"button\s+batter(?:y|ies)\b"
@@ -191,6 +210,7 @@ def _strip_button_battery_description(value: object) -> str:
             " ".join(
                 part for part in parts
                 if not _BATTERY_WORD_RE.search(part)
+                and not _BUTTON_BATTERY_RE.search(part)
             )
         )
     return _clean_listing_spacing("\n".join(kept_lines), multiline=True)
@@ -312,5 +332,10 @@ def enforce_prohibited_listing_terms(rows: list[dict]) -> list[dict]:
                     used.add(fingerprint)
                     break
 
-        normalize_keywords_for_row(row)
+        if str(row.get("site") or "US") in {"US", "UK", "CA"}:
+            normalize_keywords_for_row(row)
+        else:
+            from .text.locale import normalize_localized_listing_fields
+
+            normalize_localized_listing_fields(row)
     return rows

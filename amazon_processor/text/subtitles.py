@@ -20,6 +20,7 @@ from ..quality import (
     term_tokens,
     trim_words,
 )
+from .locale import market_for_row, sanitize_localized_subtitle
 
 
 TITLE_DISPLAY_LIMIT = 75
@@ -217,10 +218,13 @@ def normalize_subtitle_for_row(row: dict) -> dict:
     """Normalize or rule-fill one row's subtitle."""
     title = str(row.get("title") or "").strip()
     before = str(row.get("subtitle") or "")
+    market = market_for_row(row)
     if not title or len(title) >= TITLE_DISPLAY_LIMIT:
         row["subtitle"] = ""
     elif not str(row.get("desc") or "").strip():
         row["subtitle"] = ""
+    elif market.language_code != "en":
+        row["subtitle"] = sanitize_localized_subtitle(before)
     else:
         row["subtitle"] = ""
         if before.strip():

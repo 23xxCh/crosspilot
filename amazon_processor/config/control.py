@@ -255,6 +255,32 @@ def _validate_runtime(settings: dict[str, Any]) -> None:
         raise ConfigurationError("503 最短等待不能大于最长等待")
 
 
+def _validate_markets(settings: dict[str, Any]) -> None:
+    markets = settings.get("markets")
+    if not isinstance(markets, dict) or not markets:
+        raise ConfigurationError("settings.markets 必须是非空对象")
+    required = {
+        "country",
+        "language",
+        "language_code",
+        "locale",
+        "compatibility_connector",
+    }
+    for code, value in markets.items():
+        if str(code).strip().upper() != str(code):
+            raise ConfigurationError(f"站点代码必须为大写: {code}")
+        if not isinstance(value, dict):
+            raise ConfigurationError(f"markets.{code} 必须是对象")
+        missing = sorted(
+            name for name in required
+            if not isinstance(value.get(name), str) or not value[name].strip()
+        )
+        if missing:
+            raise ConfigurationError(
+                f"markets.{code} 缺少: {', '.join(missing)}"
+            )
+
+
 def _prompt_payload(prompts: PromptRegistry) -> list[dict[str, object]]:
     result = []
     for spec in prompts.specs():
@@ -456,6 +482,7 @@ def _staged_configuration(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
             stage_prompt_registry.get(spec.prompt_id)
 
         _validate_runtime(settings)
+        _validate_markets(settings)
         missing_routes = CredentialStore(
             new_registry,
             env_path=stage_env,
@@ -626,7 +653,9 @@ def restore_backup(name: str, revision: str) -> dict[str, Any]:
         backup_prompts = PromptRegistry(source / "prompts")
         for spec in backup_prompts.specs():
             backup_prompts.get(spec.prompt_id)
-        _validate_runtime(_read_json(source / "settings.json"))
+        restored_settings = _read_json(source / "settings.json")
+        _validate_runtime(restored_settings)
+        _validate_markets(restored_settings)
         backup_env = source / ".env"
         missing = CredentialStore(
             backup_registry,

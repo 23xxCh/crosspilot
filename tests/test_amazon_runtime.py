@@ -52,7 +52,14 @@ def test_delivery_publishes_one_fixed_artifact_set(
     def fake_review(input_path, output_dir, **_kwargs):
         output = Path(output_dir)
         (output / "终审包.html").write_text("review", encoding="utf-8")
-        (output / "审核数据.json").write_text("{}", encoding="utf-8")
+        (output / "审核数据.json").write_text(
+            json.dumps({
+                "summary": {
+                    "run_metrics": _kwargs.get("run_metrics") or {},
+                },
+            }),
+            encoding="utf-8",
+        )
         (output / "图片").mkdir()
         return {"products": 1}
 
@@ -60,6 +67,7 @@ def test_delivery_publishes_one_fixed_artifact_set(
     context = _context(tmp_path)
     context.data = [{
         "id": "p1",
+        "site": "US",
         "title": "Generic Product",
         "subtitle": "Useful material, simple installation",
         "desc": "Useful product description",
@@ -86,6 +94,14 @@ def test_delivery_publishes_one_fixed_artifact_set(
             }],
     }]
     context.runtime_metrics["image_safety_gate"] = {"reviewed": 1}
+    context.runtime_metrics["marketplaces"] = {
+        "input_by_site": {"US": 1},
+        "completed_by_site": {"US": 1},
+    }
+    context.runtime_metrics["image_deduplication"] = {
+        "references": 1,
+        "unique_urls": 1,
+    }
 
     result = delivery.deliver(context, problem_product_ids=[])
 
@@ -93,6 +109,7 @@ def test_delivery_publishes_one_fixed_artifact_set(
     payload = json.loads(result.output_path.read_text(encoding="utf-8"))
     assert tuple(payload) == (
         "商品id",
+        "产品站点",
         "产品标题",
         "副标题",
         "产品描述",
@@ -108,6 +125,12 @@ def test_delivery_publishes_one_fixed_artifact_set(
     )
     assert result.review_path.is_file()
     assert result.review_data_path.is_file()
+    review_data = json.loads(result.review_data_path.read_text(encoding="utf-8"))
+    run_metrics = review_data.get("summary", {}).get("run_metrics", {})
+    assert run_metrics.get("marketplaces", {}).get("completed_by_site") == {
+        "US": 1,
+    }
+    assert run_metrics.get("image_deduplication", {}).get("unique_urls") == 1
 
 
 def test_publish_replaces_files_when_latest_directory_is_open(

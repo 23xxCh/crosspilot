@@ -176,7 +176,33 @@ def _row_images(payload: dict, mapping: dict[str, dict], index: int, audit_image
 
 def build_review_rows(payload: dict, translations: list[dict], mapping: dict[str, dict], audit_by_product: dict[str, list[dict]] | None=None) -> list[dict]:
     audit_by_product = audit_by_product or {}
-    return [{'row': index + 1, 'product_id': payload['商品id'][index], **translations[index], 'images': _row_images(payload, mapping, index, audit_by_product.get(str(payload['商品id'][index]), [])), 'quarantined': False, 'quarantine_reasons': []} for index in range(len(payload['商品id']))]
+    rows = []
+    for index, product_id in enumerate(payload['商品id']):
+        rows.append({
+            'row': index + 1,
+            'product_id': product_id,
+            'site': str(payload['产品站点'][index]),
+            **translations[index],
+            'localized': {
+                'title': str(payload['产品标题'][index]),
+                'subtitle': str(payload['副标题'][index]),
+                'description': str(payload['产品描述'][index]),
+                'bullets': [
+                    str(payload[f'Bullet Point{number}'][index])
+                    for number in range(1, 6)
+                ],
+                'keywords': str(payload['关键词信息'][index]),
+            },
+            'images': _row_images(
+                payload,
+                mapping,
+                index,
+                audit_by_product.get(str(product_id), []),
+            ),
+            'quarantined': False,
+            'quarantine_reasons': [],
+        })
+    return rows
 
 def build_quarantine_rows(quarantine_products: list[dict], mapping: dict[str, dict], *, row_offset: int) -> list[dict]:
     rows = []
@@ -191,7 +217,26 @@ def build_quarantine_rows(quarantine_products: list[dict], mapping: dict[str, di
             text_assessment = image.get('text_assessment') or {}
             images.append({'role': {'main': '主图', 'variant': '变种图', 'attachment': '附图'}.get(image.get('role'), str(image.get('role') or '图片')), 'role_key': image.get('role') or 'attachment', 'position': position, 'url': url, 'local_path': (mapping.get(url) or {}).get('path', ''), 'download_ok': bool((mapping.get(url) or {}).get('ok')), 'source': image.get('source') or 'source', 'source_url': image.get('source_url') or '', 'source_local_path': (mapping.get(image.get('source_url')) or {}).get('path', '') if image.get('source_url') else '', 'assessment': assessment, 'text_assessment': text_assessment, 'source_text_assessment': image.get('source_text_assessment') or {}, 'image_action': image.get('image_action') or '', 'source_image_action': image.get('source_image_action') or '', 'source_detected_text': list(image.get('source_detected_text') or []), 'detected_text': list(image.get('detected_text') or text_assessment.get('detected_text') or []), 'text_evidence': image.get('text_evidence') or text_assessment.get('evidence') or '', 'generation_route_offset': image.get('generation_route_offset'), 'candidates_reviewed': image.get('candidates_reviewed'), 'accepted_without_machine_review': bool(image.get('accepted_without_machine_review')), 'decision': image.get('decision') or '', 'evidence': image.get('evidence') or assessment.get('evidence') or ''})
         bullets = source_row.get('bullets') or []
-        rows.append({'row': row_offset + index + 1, 'product_id': str(item.get('product_id') or ''), 'title': str(source_row.get('title') or item.get('title') or ''), 'subtitle': str(source_row.get('subtitle') or ''), 'description': str(source_row.get('description') or ''), 'bullets': [str(bullets[i] or '') if i < len(bullets) else '' for i in range(5)], 'keywords': str(source_row.get('keywords') or ''), 'images': images, 'quarantined': True, 'quarantine_reasons': item.get('reasons') or []})
+        localized = {
+            'title': str(source_row.get('title') or item.get('title') or ''),
+            'subtitle': str(source_row.get('subtitle') or ''),
+            'description': str(source_row.get('description') or ''),
+            'bullets': [
+                str(bullets[i] or '') if i < len(bullets) else ''
+                for i in range(5)
+            ],
+            'keywords': str(source_row.get('keywords') or ''),
+        }
+        rows.append({
+            'row': row_offset + index + 1,
+            'product_id': str(item.get('product_id') or ''),
+            'site': str(source_row.get('site') or item.get('site') or 'US'),
+            **localized,
+            'localized': localized,
+            'images': images,
+            'quarantined': True,
+            'quarantine_reasons': item.get('reasons') or [],
+        })
     return rows
 from pathlib import Path
 from ..providers import reload_provider

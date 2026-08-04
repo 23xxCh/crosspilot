@@ -7,9 +7,20 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .markets import normalize_market_code
+
+
+AMAZON_JSON_LEGACY_INPUT_FIELDS = (
+    '商品id',
+    '产品标题',
+    '产品描述',
+    '产品图片链接',
+    '变种图片链接',
+)
 
 AMAZON_JSON_INPUT_FIELDS = (
     '商品id',
+    '产品站点',
     '产品标题',
     '产品描述',
     '产品图片链接',
@@ -18,6 +29,7 @@ AMAZON_JSON_INPUT_FIELDS = (
 
 AMAZON_JSON_OUTPUT_FIELDS = (
     '商品id',
+    '产品站点',
     '产品标题',
     '副标题',
     '产品描述',
@@ -145,7 +157,24 @@ def load_columnar_json(path: str, *, max_rows: int | None = None) -> dict:
             payload = json.load(handle)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f'文件不是有效的 Amazon JSON: {exc}') from exc
-    validate_columnar_payload(payload, max_rows=max_rows)
+    legacy = '产品站点' not in payload
+    validate_columnar_payload(
+        payload,
+        required_fields=(
+            AMAZON_JSON_LEGACY_INPUT_FIELDS
+            if legacy else AMAZON_JSON_INPUT_FIELDS
+        ),
+        max_rows=max_rows,
+    )
+    if legacy:
+        payload = dict(payload)
+        payload['产品站点'] = ['US'] * len(payload['商品id'])
+        payload['_legacy_site_defaulted'] = True
+    else:
+        payload['产品站点'] = [
+            normalize_market_code(value)
+            for value in payload['产品站点']
+        ]
     return payload
 
 
@@ -163,7 +192,10 @@ def rows_from_payload(
     max_rows: int = 0,
 ) -> list[dict[str, Any]]:
     """Convert the column-oriented source contract into processing rows."""
-    row_count = validate_columnar_payload(payload)
+    row_count = validate_columnar_payload(
+        payload,
+        required_fields=AMAZON_JSON_INPUT_FIELDS,
+    )
     selected = min(row_count, max_rows) if max_rows else row_count
     rows = []
     for index in range(selected):
@@ -176,8 +208,16 @@ def rows_from_payload(
         rows.append(
             {
                 "id": str(payload["商品id"][index] or ""),
+                "site": normalize_market_code(payload["产品站点"][index]),
+                "_legacy_site_defaulted": bool(
+                    payload.get("_legacy_site_defaulted")
+                ),
                 "title": str(payload["产品标题"][index] or "").strip(),
                 "desc": str(payload["产品描述"][index] or ""),
+                "_source_title": str(
+                    payload["产品标题"][index] or ""
+                ).strip(),
+                "_source_desc": str(payload["产品描述"][index] or ""),
                 "main_img": product_images[0] if product_images else "",
                 "extra_imgs": product_images[1:],
                 "var_imgs": variant_images,
@@ -244,6 +284,7 @@ def build_output_payload(
     problem_id_set = set(normalized_problem_ids)
     payload = {
         '商品id': [],
+        '产品站点': [],
         '产品标题': [],
         '副标题': [],
         '产品描述': [],
@@ -281,6 +322,9 @@ def build_output_payload(
         ]
 
         payload['商品id'].append(product_id)
+        payload['产品站点'].append(
+            normalize_market_code(row.get('site') or 'US')
+        )
         payload['产品标题'].append(str(row.get('title') or ''))
         payload['副标题'].append(str(row.get('subtitle') or ''))
         payload['产品描述'].append(str(row.get('desc') or ''))

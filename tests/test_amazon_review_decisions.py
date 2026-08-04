@@ -11,6 +11,7 @@ from amazon_processor.review.decisions import apply_decisions
 def payload() -> dict:
     return {
         "商品id": ["p1", "p2"],
+        "产品站点": ["US", "DE"],
         "产品标题": ["One", "Two"],
         "副标题": ["First highlight", "Second highlight"],
         "产品描述": ["Description one", "Description two"],

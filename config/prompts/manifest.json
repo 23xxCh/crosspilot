@@ -15,7 +15,12 @@
       "category": "Amazon 文案",
       "path": "amazon/title_optimize.txt",
       "variables": [
-        "title"
+        "title",
+        "site_code",
+        "market_name",
+        "target_language",
+        "target_locale",
+        "compatibility_connector"
       ],
       "used_by": "标题优化"
     },
@@ -27,7 +32,11 @@
       "variables": [
         "strict_instruction",
         "title",
-        "description"
+        "description",
+        "site_code",
+        "market_name",
+        "target_language",
+        "target_locale"
       ],
       "used_by": "描述清洗"
     },
@@ -38,9 +47,31 @@
       "path": "amazon/bullet_keywords.txt",
       "variables": [
         "title",
-        "description"
+        "description",
+        "site_code",
+        "market_name",
+        "target_language",
+        "target_locale"
       ],
       "used_by": "副标题、Bullet 与关键词生成"
+    },
+    {
+      "id": "amazon.localization_repair",
+      "label": "多站点文案严格修复",
+      "category": "Amazon 文案",
+      "path": "amazon/localization_repair.txt",
+      "variables": [
+        "source_title",
+        "source_description",
+        "candidate_json",
+        "violations",
+        "site_code",
+        "market_name",
+        "target_language",
+        "target_locale",
+        "compatibility_connector"
+      ],
+      "used_by": "目标语言与字段规则最终修复"
     },
     {
       "id": "review.translation",

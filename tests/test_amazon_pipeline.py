@@ -301,6 +301,11 @@ def test_pipeline_marks_product_without_attachments_as_problem(
     monkeypatch.setattr(pipeline, "optimize_titles", identity)
     monkeypatch.setattr(pipeline, "clean_descriptions", identity)
     monkeypatch.setattr(pipeline, "generate_bullets_keywords", identity)
+    monkeypatch.setattr(
+        pipeline,
+        "ensure_localized_rows",
+        lambda rows, **_kwargs: rows,
+    )
     monkeypatch.setattr(pipeline, "deliver", fake_deliver)
 
     result = pipeline.process_json(source)

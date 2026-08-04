@@ -165,6 +165,7 @@ from ..config.prompts import get_prompt_registry
 from ..providers import ProviderQuotaError, get_provider as _default_get_provider
 from ..log import log as _log
 from ..quality import AMAZON_TITLE_CONCURRENCY, add_audit as _add_audit, add_quality_issue as _add_quality_issue, missing_factual_markers as _missing_factual_markers, unexpected_brand_markers as _unexpected_brand_markers
+from .locale import market_prompt_values, normalize_localized_title
 QuotaExhaustedError = ProviderQuotaError
 _prompts = get_prompt_registry()
 
@@ -189,10 +190,17 @@ def optimize_titles(data, progress=None, provider_getter=None):
     if to_optimize:
         print(f'  API 优化 {len(to_optimize)} 条（DeepSeek，{AMAZON_TITLE_CONCURRENCY} 并发）...', flush=True)
 
-        def optimize_one(index, title):
+        def optimize_one(index, row):
             try:
                 provider = (provider_getter or _default_get_provider)()
-                result = provider.call_text(_prompts.render('amazon.title_optimize', title=title), max_tokens=128)
+                result = provider.call_text(
+                    _prompts.render(
+                        'amazon.title_optimize',
+                        title=row['title'],
+                        **market_prompt_values(row),
+                    ),
+                    max_tokens=128,
+                )
                 if result:
                     return (index, result.strip())
             except QuotaExhaustedError:
@@ -202,7 +210,7 @@ def optimize_titles(data, progress=None, provider_getter=None):
             return (index, None)
         done = 0
         with ThreadPoolExecutor(max_workers=AMAZON_TITLE_CONCURRENCY) as pool:
-            futures = {pool.submit(optimize_one, index, row['title']): index for index, row in to_optimize}
+            futures = {pool.submit(optimize_one, index, row): index for index, row in to_optimize}
             for future in as_completed(futures):
                 try:
                     index, new_title = future.result()
@@ -215,7 +223,10 @@ def optimize_titles(data, progress=None, provider_getter=None):
                         _log.warn('标题优化返回meta文本，回退规则处理', row=index)
                         _add_quality_issue(data[index], 'title_ai_fallback', '标题模型返回了说明性文本，已使用规则结果')
                     else:
-                        normalized = normalize_title(new_title)
+                        normalized = normalize_localized_title(
+                            new_title,
+                            data[index].get('site') or 'US',
+                        )
                         missing = _missing_factual_markers(data[index].get('title', ''), normalized)
                         unexpected_brands = _unexpected_brand_markers(data[index].get('title', ''), normalized)
                         if missing or unexpected_brands:
@@ -235,7 +246,10 @@ def optimize_titles(data, progress=None, provider_getter=None):
                     print(f'    API标题: {done}/{len(to_optimize)}', flush=True)
     for row in data:
         before_title = row.get('title', '')
-        row['title'] = normalize_title(before_title)
+        row['title'] = normalize_localized_title(
+            before_title,
+            row.get('site') or 'US',
+        )
         if row['title'] != before_title:
             _add_audit(row, '标题优化', 'title', before_title, row['title'], method='rule', reason='final_normalize', action='确认最终标题仍保留硬规格')
     if progress:

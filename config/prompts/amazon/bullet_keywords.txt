@@ -1,9 +1,11 @@
-Based on this product title and description, generate:
+Based on this product title and description, generate Amazon copy for
+{market_name} ({site_code}) in natural {target_language}, following
+{target_locale} search and spelling conventions:
 
 1. SUBTITLE / PRODUCT HIGHLIGHT:
    - Only return a non-empty subtitle when the title has fewer than 75 characters
    - Max 125 characters including spaces
-   - English short phrases separated by commas
+   - {target_language} short phrases separated by commas
    - Do NOT write a full sentence
    - Do NOT repeat the title's core product words
    - Use remaining factual selling points from the description:
@@ -16,7 +18,7 @@ Based on this product title and description, generate:
      Kids; omit the entire button-battery or battery-life selling point
 
 2. BULLET POINTS (exactly 5):
-   - Each under 200 chars, English
+   - Each under 200 chars, {target_language}
    - Cover: material, dimensions, features, compatibility, package contents
    - Natural language for Amazon buyers
    - NO brand names allowed
@@ -25,12 +27,14 @@ Based on this product title and description, generate:
      returns, warranty, feedback requests, or "Credit Card Knife"
 
 3. SEARCH KEYWORDS (exactly 10):
-   - 10 relevant search terms, comma-separated
+   - 10 relevant {target_locale} search terms, comma-separated
    - NO brand names
    - Every term must be relevant to this title or cleaned description
    - Never include unrelated products, prices, stores, or policy words
    - Never include Button Battery, Button Batteries, Boy, Boys, Girl, Girls,
      or Kids
+   - Preserve Generic, model numbers, years, measurements, and technical codes;
+     do not translate or invent them
 
 Return EXACTLY: {{"subtitle": "phrase one, phrase two", "bullets": ["point1","point2","point3","point4","point5"], "keywords": "kw1,kw2,...,kw10"}}
 No markdown code fences. No extra text.

@@ -172,6 +172,55 @@ def run_gate(
     return result, metrics
 
 
+def test_multisite_rows_review_each_unique_image_only_once(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    sites = ["US", "UK", "CA", "MX", "ES", "BR", "DE", "FR", "IT"]
+    product_urls = {
+        physical_index: [
+            f"https://img.example/product-{physical_index}-{image_index}.jpg"
+            for image_index in range(12)
+        ]
+        for physical_index in range(2)
+    }
+    rows = []
+    for physical_index, urls in product_urls.items():
+        for site in sites:
+            rows.append({
+                "id": f"{physical_index}-{site}",
+                "site": site,
+                "title": f"Product {physical_index} {site}",
+                "main_img": urls[0],
+                "extra_imgs": urls[1:],
+                "var_imgs": [],
+            })
+
+    unique_urls = {
+        url
+        for urls in product_urls.values()
+        for url in urls
+    }
+    provider = StructuredProvider({
+        url: assessment("safe")
+        for url in unique_urls
+    })
+
+    result, _metrics = run_gate(rows, provider, tmp_path, monkeypatch)
+
+    assert len(result) == 18
+    assert sum(1 + len(row["extra_imgs"]) for row in rows) == 216
+    reviewed_urls = [url for url, confirmation in provider.assess_calls if not confirmation]
+    assert len(reviewed_urls) == 24
+    assert set(reviewed_urls) == unique_urls
+    assert len(provider.text_assess_calls) == 2
+    assert set(provider.text_assess_calls) == {
+        product_urls[0][0],
+        product_urls[1][0],
+    }
+    assert provider.gen_calls == []
+
+
 def test_deletes_branded_attachment_and_edits_variant(
     tmp_path,
     monkeypatch,

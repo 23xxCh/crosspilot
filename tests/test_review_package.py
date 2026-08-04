@@ -14,6 +14,7 @@ from amazon_processor.review.translation import (
 def _payload() -> dict:
     return {
         "商品id": ["released-1"],
+        "产品站点": ["DE"],
         "产品标题": ["Product"],
         "副标题": ["Compact fit, easy installation"],
         "产品描述": ["Description"],
@@ -153,12 +154,17 @@ def test_export_review_composes_package_and_quarantine(
     )
     assert review_data["run_id"] == "module-test"
     assert review_data["products"][1]["quarantined"] is True
+    assert review_data["products"][0]["site"] == "DE"
+    assert review_data["products"][0]["localized"]["title"] == "Product"
     main = review_data["products"][0]["images"][0]
     assert main["text_assessment"]["status"] == "safe"
     assert main["source_text_assessment"]["detected_text"] == ["12V"]
     assert main["source_image_action"] == "edit_translate"
     html = (output_dir / "终审包.html").read_text(encoding="utf-8")
     assert "处理动作：edit_translate" in html
+    assert "站点：DE" in html
+    assert "站点原文（DE）" in html
+    assert "中文检查译文" in html
     assert "编辑前文字：12V" in html
     assert "拖动主图/附图可换位" in html
     assert 'data-action="reorder_images"' not in html

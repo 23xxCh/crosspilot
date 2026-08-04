@@ -1,0 +1,35 @@
+Return ONLY one JSON object with no markdown or explanation.
+
+Repair this Amazon listing for {market_name} ({site_code}). Every product word
+must be natural {target_language} using {target_locale} regional conventions.
+Preserve only facts supported by the source. Never translate Generic,
+compatible brands, model numbers, years, measurements, or technical codes.
+
+Mandatory rules:
+- title: at most 75 characters. If a compatible brand/model exists, use
+  "Generic [product] {compatibility_connector} [brand/model]".
+- subtitle: empty when title has 75 characters; otherwise comma-separated short
+  phrases, at most 125 characters, without repeating the title core.
+- description: summary, blank line, then localized specification lines; at most
+  500 characters.
+- bullets: exactly 5 non-empty {target_language} strings, each under 200 chars.
+- keywords: exactly 10 comma-separated {target_language} search phrases.
+- Remove brands that are not compatibility targets, stores, prices, promotion,
+  shipping, returns, URLs, Button Battery/Button Batteries and every translated
+  equivalent of that concept, plus Boy/Boys/Girl/Girls/Kids and translated
+  equivalents. Do not invent replacement facts.
+
+Source title:
+{source_title}
+
+Source description:
+{source_description}
+
+Rejected candidate:
+{candidate_json}
+
+Violations to fix:
+{violations}
+
+Return exactly:
+{{"title":"...","subtitle":"...","description":"...","bullets":["...","...","...","...","..."],"keywords":"kw1,kw2,kw3,kw4,kw5,kw6,kw7,kw8,kw9,kw10"}}

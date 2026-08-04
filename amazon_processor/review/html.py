@@ -181,6 +181,30 @@ def render_html(
             f'<li>{html.escape(item)}</li>'
             for item in row['bullets']
         )
+        localized = row.get('localized') or {}
+        localized_bullets = ''.join(
+            f'<li>{html.escape(str(item))}</li>'
+            for item in localized.get('bullets') or []
+        )
+        localized_subtitle = (
+            '<section><h3>商品亮点</h3>'
+            f'<p>{html.escape(str(localized.get("subtitle") or ""))}</p></section>'
+            if localized.get('subtitle')
+            else ''
+        )
+        localized_html = (
+            '<details class="localized-copy" open>'
+            f'<summary>站点原文（{html.escape(str(row.get("site") or "US"))}）</summary>'
+            f'<h2>{html.escape(str(localized.get("title") or ""))}</h2>'
+            f'{localized_subtitle}'
+            '<section><h3>产品描述</h3>'
+            f'<p class="description">{html.escape(str(localized.get("description") or ""))}</p>'
+            '</section>'
+            f'<section><h3>五点描述</h3><ol>{localized_bullets}</ol></section>'
+            '<section><h3>关键词</h3>'
+            f'<p>{html.escape(str(localized.get("keywords") or ""))}</p></section>'
+            '</details>'
+        )
         quarantine_html = ''
         if row.get('quarantined'):
             reasons = []
@@ -213,10 +237,15 @@ def render_html(
             statuses.add('quarantined')
         search_text = ' '.join([
             str(row['product_id']),
+            str(row.get('site') or ''),
             row['title'],
             row.get('subtitle', ''),
             row['description'],
             row['keywords'],
+            str(localized.get('title') or ''),
+            str(localized.get('subtitle') or ''),
+            str(localized.get('description') or ''),
+            str(localized.get('keywords') or ''),
         ]).lower()
         subtitle_html = (
             '<section><h3>商品亮点</h3>'
@@ -240,6 +269,7 @@ def render_html(
             '<header>'
             f'<span class="row">第 {row["row"]} 行</span>'
             f'<span class="id">商品 ID：{html.escape(row["product_id"])}</span>'
+            f'<span class="site-badge">站点：{html.escape(str(row.get("site") or "US"))}</span>'
             f'{release_badge}'
             '</header>'
             '<div class="product-actions">'
@@ -249,6 +279,8 @@ def render_html(
             '<input class="decision-note" placeholder="审核备注（可选）">'
             '<span class="decision-label"></span>'
             '</div>'
+            f'{localized_html}'
+            '<section class="translated-copy"><h3>中文检查译文</h3>'
             f'<h2>{html.escape(row["title"])}</h2>'
             f'{subtitle_html}'
             f'{quarantine_html}'
@@ -257,7 +289,7 @@ def render_html(
             '</section>'
             f'<section><h3>五点描述</h3><ol>{bullets}</ol></section>'
             '<section><h3>关键词</h3>'
-            f'<p>{html.escape(row["keywords"])}</p></section>'
+            f'<p>{html.escape(row["keywords"])}</p></section></section>'
             '<section><h3>全部图片 '
             '<small class="image-order-help">拖动主图/附图可换位；第 1 张自动成为主图</small>'
             '</h3>'
@@ -294,6 +326,10 @@ body{{margin:0;background:#f4f6f8;color:#17202a;font:15px/1.65 Arial,"Microsoft 
 .product header{{display:flex;gap:18px;color:#667;font-size:13px}}
 .quarantine-badge,.released-badge{{padding:2px 8px;border-radius:10px;font-weight:700}}
 .quarantine-badge{{background:#c0392b;color:white}} .released-badge{{background:#dff4e8;color:#17613d}}
+.site-badge{{padding:2px 8px;border-radius:10px;background:#e8eefc;color:#274b94;font-weight:700}}
+.localized-copy,.translated-copy{{margin-top:14px;padding:14px 16px;border:1px solid #dce3e8;border-radius:9px}}
+.localized-copy summary{{cursor:pointer;color:#274b94;font-weight:700}}
+.translated-copy>h3{{margin-top:0;color:#0f6b4b}}
 .product-actions,.image-actions{{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:10px 0}}
 .product-actions button,.image-actions button{{border:1px solid #ccd5dc;border-radius:6px;padding:6px 9px;background:#f7f9fa;cursor:pointer}}
 .product-actions button.selected,.image-actions button.selected{{background:#0f6b4b;color:white;border-color:#0f6b4b}}

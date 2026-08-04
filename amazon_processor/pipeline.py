@@ -20,6 +20,7 @@ from .text.descriptions import (
 )
 from .text.listing import generate_bullets_keywords
 from .text.titles import optimize_titles
+from .text.localization import LocalizationCache, ensure_localized_rows
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -103,6 +104,21 @@ def _process_json_unlocked(input_path: str | Path) -> RunResult:
         ),
     )
     validate_input_rows(rows)
+    legacy_rows = sum(
+        bool(row.get("_legacy_site_defaulted")) for row in rows
+    )
+    context.runtime_metrics["marketplaces"] = {
+        "legacy_defaulted_to_us": legacy_rows,
+        "input_by_site": {
+            site: sum(row.get("site") == site for row in rows)
+            for site in sorted({str(row.get("site") or "US") for row in rows})
+        },
+    }
+    if legacy_rows:
+        print(
+            f"旧采集表缺少产品站点：{legacy_rows} 行已按 US/en-US 处理",
+            flush=True,
+        )
     context.data, description_rejected = (
         partition_product_description_rows(rows)
     )
@@ -121,6 +137,23 @@ def _process_json_unlocked(input_path: str | Path) -> RunResult:
         / "pipeline"
         / f"{source_hash}.json"
     )
+    image_references = [
+        url
+        for row in context.data
+        for url in (
+            [row.get("main_img")]
+            + list(row.get("extra_imgs") or [])
+            + list(row.get("var_imgs") or [])
+        )
+        if str(url or "")
+    ]
+    context.runtime_metrics["image_deduplication"] = {
+        "references": len(image_references),
+        "unique_urls": len(set(image_references)),
+        "deduplicated_references": (
+            len(image_references) - len(set(image_references))
+        ),
+    }
     context.transform(
         "审图与生图",
         run_structured_image_safety_gate,
@@ -129,6 +162,15 @@ def _process_json_unlocked(input_path: str | Path) -> RunResult:
         runtime_metrics=context.runtime_metrics,
         provider_getter=get_provider,
     )
+    generated_urls = {
+        str(image.get("url") or "")
+        for row in context.data
+        for image in row.get("_image_assessments") or []
+        if image.get("source") == "generated" and image.get("url")
+    }
+    context.runtime_metrics["image_deduplication"][
+        "unique_generated_images"
+    ] = len(generated_urls)
     context.data, attachment_rejected = (
         _partition_rows_without_attachments(context.data)
     )
@@ -143,24 +185,95 @@ def _process_json_unlocked(input_path: str | Path) -> RunResult:
             if str(item.get("product_id") or "")
         ),
     ]))
-    context.transform(
-        "标题优化",
-        optimize_titles,
-        provider_getter=get_provider,
+    text_cache = LocalizationCache(
+        RUNTIME_ROOT
+        / "cache"
+        / "localization"
+        / f"{source_hash}.json"
     )
-    context.transform(
-        "描述清洗",
-        clean_descriptions,
-        provider_getter=get_provider,
+    all_rows = context.data
+    for row in all_rows:
+        text_cache.restore(row)
+    pending_rows = [
+        row for row in all_rows
+        if not row.get("_localization_cache_hit")
+    ]
+    localization_metrics = context.runtime_metrics.setdefault(
+        "localization",
+        {},
     )
-    context.transform(
-        "Bullet与关键词",
-        generate_bullets_keywords,
-        provider_getter=get_provider,
-    )
+    localization_metrics.setdefault("initial_pending", len(pending_rows))
+    title_pending = [
+        row for row in pending_rows
+        if "title" not in row.get("_localization_partial_fields", [])
+    ]
+    if title_pending:
+        context.data = title_pending
+        context.transform(
+            "标题优化",
+            optimize_titles,
+            provider_getter=get_provider,
+        )
+        for row in context.data:
+            text_cache.store_partial(row, ("title",))
 
-    context.data = enforce_description_safety(context.data)
-    context.data = enforce_prohibited_listing_terms(context.data)
+    description_pending = [
+        row for row in pending_rows
+        if "desc" not in row.get("_localization_partial_fields", [])
+    ]
+    if description_pending:
+        context.data = description_pending
+        context.transform(
+            "描述清洗",
+            clean_descriptions,
+            provider_getter=get_provider,
+        )
+        context.data = enforce_description_safety(context.data)
+        for row in context.data:
+            text_cache.store_partial(row, ("desc",))
+
+    listing_fields = {"subtitle", "bullets", "keywords"}
+    listing_pending = [
+        row for row in pending_rows
+        if not listing_fields.issubset(
+            row.get("_localization_partial_fields", [])
+        )
+    ]
+    if listing_pending:
+        context.data = listing_pending
+        context.transform(
+            "Bullet与关键词",
+            generate_bullets_keywords,
+            provider_getter=get_provider,
+        )
+        context.data = enforce_prohibited_listing_terms(context.data)
+        for row in context.data:
+            text_cache.store_partial(
+                row,
+                ("subtitle", "bullets", "keywords"),
+            )
+
+    if pending_rows:
+        context.data = pending_rows
+        context.data = enforce_description_safety(context.data)
+        context.data = enforce_prohibited_listing_terms(context.data)
+        context.transform(
+            "多站点文案校验",
+            ensure_localized_rows,
+            cache=text_cache,
+            provider_getter=get_provider,
+            runtime_metrics=context.runtime_metrics,
+        )
+    context.data = all_rows
+    marketplace_metrics = context.runtime_metrics["marketplaces"]
+    marketplace_metrics["completed_by_site"] = {
+        site: sum(row.get("site") == site for row in context.data)
+        for site in sorted({str(row.get("site") or "US") for row in context.data})
+    }
+    marketplace_metrics["localization_cache_hits"] = text_cache.hits
+    localization_metrics["cache_hits"] = text_cache.hits
+    localization_metrics["cache_writes"] = text_cache.writes
+    localization_metrics["completed"] = len(context.data)
     result = deliver(
         context,
         problem_product_ids=problem_product_ids,

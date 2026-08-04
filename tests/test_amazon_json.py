@@ -34,6 +34,7 @@ OUTPUT_TEMPLATE = os.path.join(
 def _valid_input():
     return {
         '商品id': ['item-1'],
+        '产品站点': ['US'],
         '产品标题': ['Original title'],
         '产品描述': ['Original description'],
         '产品图片链接': [[
@@ -47,6 +48,7 @@ def _valid_input():
 def _processed_rows():
     return [{
         'id': 'item-1',
+        'site': 'US',
         'title': 'Optimized title',
         'subtitle': 'Durable material, compact fit',
         'desc': 'Clean description',
@@ -75,6 +77,7 @@ def test_build_output_payload_matches_refill_template_shape():
 
     assert tuple(payload) == AMAZON_JSON_OUTPUT_FIELDS
     assert payload['商品id'] == ['item-1']
+    assert payload['产品站点'] == ['US']
     assert payload['产品标题'] == ['Optimized title']
     assert payload['副标题'] == ['Durable material, compact fit']
     assert payload['产品描述'] == ['Clean description']
@@ -227,6 +230,33 @@ def test_load_rejects_invalid_image_url(tmp_path):
         load_columnar_json(str(path))
 
 
+def test_load_normalizes_market_code_and_rejects_unknown(tmp_path):
+    payload = _valid_input()
+    payload['产品站点'] = [' de ']
+    path = tmp_path / 'market.json'
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+
+    loaded = load_columnar_json(str(path))
+    assert loaded['产品站点'] == ['DE']
+
+    payload['产品站点'] = ['JP']
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+    with pytest.raises(ValueError, match='不支持的产品站点: JP'):
+        load_columnar_json(str(path))
+
+
+def test_legacy_input_defaults_to_us(tmp_path):
+    payload = _valid_input()
+    del payload['产品站点']
+    path = tmp_path / 'legacy.json'
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+
+    rows = load_rows(path)
+
+    assert rows[0]['site'] == 'US'
+    assert rows[0]['_legacy_site_defaulted'] is True
+
+
 def test_load_rejects_duplicate_product_ids(tmp_path):
     payload = _valid_input()
     for field in AMAZON_JSON_INPUT_FIELDS:
@@ -248,6 +278,7 @@ def test_load_rows_applies_requested_row_limit(tmp_path):
     """CLI --max-rows must slice valid input instead of rejecting the full file."""
     payload = {
         '商品id': [f'item-{index}' for index in range(3)],
+        '产品站点': ['US', 'DE', 'FR'],
         '产品标题': [f'Title {index}' for index in range(3)],
         '产品描述': [f'Description {index}' for index in range(3)],
         '产品图片链接': [
@@ -261,3 +292,4 @@ def test_load_rows_applies_requested_row_limit(tmp_path):
     rows = load_rows(path, max_rows=2)
 
     assert [row['id'] for row in rows] == ['item-0', 'item-1']
+    assert [row['site'] for row in rows] == ['US', 'DE']

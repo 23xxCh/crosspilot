@@ -25,6 +25,7 @@ from ..quality import (
     relevant_token_overlap as _relevant_token_overlap,
     trim_words as _trim_words,
 )
+from .locale import description_label, market_prompt_values
 
 
 QuotaExhaustedError = ProviderQuotaError
@@ -419,6 +420,7 @@ def format_description(
     details: list[tuple[str, str]] | tuple[tuple[str, str], ...],
     *,
     limit: int = DESCRIPTION_MAX_CHARS,
+    site: str = "US",
 ) -> tuple[str, bool]:
     """Render a stable intro + blank line + labeled-lines description."""
     cleaned_summary = _clean_line(summary)
@@ -431,7 +433,10 @@ def format_description(
         if value not in grouped[label]:
             grouped[label].append(value)
     lines_by_label = {
-        label: f"{label}: {'; '.join(grouped[label])}"
+        label: (
+            f"{description_label(label, site)}: "
+            f"{'; '.join(grouped[label])}"
+        )
         for label in _DISPLAY_ORDER
         if grouped.get(label)
     }
@@ -480,13 +485,15 @@ def format_description(
 def build_rule_description(
     title: str,
     source: str,
+    *,
+    site: str = "US",
 ) -> tuple[str, bool]:
     """Build a non-invented fallback using title and extracted source facts."""
     summary = _clean_line(title)
     if summary and summary[-1:] not in ".!?":
         summary += "."
     details = _extract_details(source)
-    return format_description(summary, details)
+    return format_description(summary, details, site=site)
 
 
 def _valid_description(
@@ -540,6 +547,7 @@ def clean_descriptions(data, progress=None, provider_getter=None):
             fallback, compacted = build_rule_description(
                 str(row.get("title") or ""),
                 "",
+                site=str(row.get("site") or "US"),
             )
             row["desc"] = fallback
             _add_quality_issue(
@@ -577,6 +585,7 @@ def clean_descriptions(data, progress=None, provider_getter=None):
                         title=title,
                         description=source,
                         strict_instruction=strict_instruction,
+                        **market_prompt_values(data[index]),
                     ),
                     max_tokens=3000,
                 )
@@ -596,6 +605,7 @@ def clean_descriptions(data, progress=None, provider_getter=None):
             candidate, compacted = format_description(
                 parsed[0],
                 parsed[1],
+                site=str(data[index].get("site") or "US"),
             )
             valid, missing = _valid_description(
                 title,
@@ -605,7 +615,11 @@ def clean_descriptions(data, progress=None, provider_getter=None):
             last_missing = missing
             if valid:
                 return index, candidate, compacted, "ai", []
-        fallback, compacted = build_rule_description(title, source)
+        fallback, compacted = build_rule_description(
+            title,
+            source,
+            site=str(data[index].get("site") or "US"),
+        )
         return index, fallback, compacted, "fallback", last_missing
 
     done = 0
@@ -640,6 +654,7 @@ def clean_descriptions(data, progress=None, provider_getter=None):
                 cleaned, compacted = build_rule_description(
                     str(data[index].get("title") or ""),
                     source,
+                    site=str(data[index].get("site") or "US"),
                 )
                 method = "fallback"
                 missing = []
@@ -710,6 +725,7 @@ def enforce_description_safety(data):
         replacement, _compacted = build_rule_description(
             title,
             str(row.get("_description_source_block") or ""),
+            site=str(row.get("site") or "US"),
         )
         row["desc"] = replacement
         _add_quality_issue(

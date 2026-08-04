@@ -211,6 +211,16 @@ def deliver(
             if str(product_id)
         )
     )
+    for key in (
+        "source",
+        "marketplaces",
+        "image_deduplication",
+        "localization",
+        "attachment_rejected_products",
+    ):
+        value = context.runtime_metrics.get(key)
+        if value is not None:
+            run_metrics[key] = value
 
     audit_by_product = {
         str(row.get("id") or ""): list(
