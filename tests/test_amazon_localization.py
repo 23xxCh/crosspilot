@@ -112,6 +112,33 @@ def test_language_validation_rejects_english_copy_for_germany() -> None:
     )
 
 
+def test_language_validation_rejects_english_field_hidden_by_localized_copy() -> None:
+    row = _localized_row("FR")
+    row["title"] = "Generic Start Stop Push Button Cover en Carbone pour Voiture"
+    row["subtitle"] = "Alliage métallique, diamètre intérieur 3 cm"
+    row["desc"] = (
+        "Cache de bouton de démarrage en carbone pour voiture.\n\n"
+        "Material: Metal alloy. Diameter: 3CM inner, 3.8CM outer."
+    )
+    row["bullets"] = [
+        "Alliage métallique robuste pour une utilisation quotidienne",
+        "Montage simple dans l'habitacle du véhicule",
+        "Protège le bouton contre les rayures et l'usure",
+        "Dimensions précises de 3 cm et 3,8 cm",
+        "Le colis contient un cache de bouton",
+    ]
+    row["keywords"] = (
+        "cache bouton voiture, protection bouton, accessoire intérieur, "
+        "alliage métallique, finition carbone, cache démarrage, bouton auto, "
+        "protection voiture, diamètre 3 cm, cache 3,8 cm"
+    )
+
+    violations = localization_violations(row)
+
+    assert "language_title:en->fr" in violations
+    assert "language_description_line_3:en->fr" in violations
+
+
 def test_release_validation_rejects_long_keywords_special_subtitle_and_oem() -> None:
     row = _localized_row("US")
     row["subtitle"] = "Universal 4-12 inch fit"

@@ -35,7 +35,7 @@ from .locale import (
 )
 
 
-LOCALIZATION_POLICY_VERSION = "multi-market-localization-v2"
+LOCALIZATION_POLICY_VERSION = "multi-market-localization-v3"
 TEXT_FIELDS = ("title", "subtitle", "desc", "bullets", "keywords")
 _prompts = get_prompt_registry()
 _cache_lock = threading.Lock()

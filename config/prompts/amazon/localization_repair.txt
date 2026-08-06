@@ -4,6 +4,11 @@ Repair this Amazon listing for {market_name} ({site_code}). Every product word
 must be natural {target_language} using {target_locale} regional conventions.
 Preserve only facts supported by the source. Never translate Generic,
 compatible brands, model numbers, years, measurements, or technical codes.
+Do not copy English source phrases into a non-English listing. Translate every
+ordinary product term, description sentence, specification label, material,
+colour, feature, use case, bullet, and keyword into {target_language}. English
+may remain only when it is Generic, a real brand/model, a year, a measurement,
+or a technical code.
 
 Mandatory rules:
 - title: at most 75 characters. If a compatible brand/model exists, use

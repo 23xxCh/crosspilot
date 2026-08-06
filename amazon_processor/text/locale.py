@@ -232,9 +232,13 @@ def normalize_localized_listing_fields(row: dict) -> dict:
     return row
 
 
-def _detected_language(text: str) -> tuple[str, float] | None:
+def _detected_language(
+    text: str,
+    *,
+    min_letters: int = 80,
+) -> tuple[str, float] | None:
     letters = sum(char.isalpha() for char in text)
-    if letters < 80:
+    if letters < min_letters:
         return None
     try:
         from langdetect import DetectorFactory, detect_langs
@@ -288,6 +292,35 @@ def localization_violations(row: dict) -> list[str]:
         violations.append(
             f"language:{detected[0]}->{market.language_code}"
         )
+    language_fields = {
+        "title": (title, 35),
+        "subtitle": (subtitle, 50),
+        "description": (description, 60),
+        "bullets": (" ".join(bullets), 80),
+        "keywords": (" ".join(keywords), 60),
+    }
+    for field, (text, min_letters) in language_fields.items():
+        detected = _detected_language(text, min_letters=min_letters)
+        if (
+            detected is not None
+            and detected[0] != market.language_code
+            and detected[1] >= 0.80
+        ):
+            violations.append(
+                f"language_{field}:{detected[0]}->{market.language_code}"
+            )
+    for index, line in enumerate(description.splitlines(), start=1):
+        detected = _detected_language(line, min_letters=40)
+        if (
+            detected is not None
+            and detected[0] == "en"
+            and market.language_code != "en"
+            and detected[1] >= 0.80
+        ):
+            violations.append(
+                f"language_description_line_{index}:"
+                f"{detected[0]}->{market.language_code}"
+            )
     return violations
 
 
