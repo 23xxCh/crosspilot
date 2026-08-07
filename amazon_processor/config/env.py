@@ -44,6 +44,7 @@ def _read_runtime() -> dict[str, str]:
         "image_regeneration_routes": (
             "IMAGE_SAFETY_REGEN_LIMIT"
         ),
+        "image_processing_mode": "IMAGE_PROCESSING_MODE",
         "generated_image_review_mode": "GENERATED_IMAGE_REVIEW_MODE",
         "adaptive_failure_rate": "ADAPTIVE_FAILURE_RATE",
         "adaptive_recovery_batches": "ADAPTIVE_RECOVERY_BATCHES",
@@ -62,6 +63,7 @@ def _read_runtime() -> dict[str, str]:
         "agnes_503_circuit_threshold": 3,
         "agnes_503_circuit_cooldown_s": 120,
         "image_regeneration_routes": 3,
+        "image_processing_mode": "select_existing",
         "generated_image_review_mode": "strict",
         "adaptive_failure_rate": 0.25,
         "adaptive_recovery_batches": 3,

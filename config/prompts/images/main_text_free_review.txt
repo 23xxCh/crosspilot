@@ -6,7 +6,8 @@ one JSON object:
   "placement": "none" | "overlay" | "product_surface" | "packaging" | "background" | "unknown",
   "detected_text": ["visible words, if any"],
   "confidence": 0.0,
-  "evidence": "short factual visual evidence"
+  "evidence": "short factual visual evidence",
+  "main_image_quality": "preferred" | "acceptable" | "fallback" | "unknown"
 }
 
 Return risk when ANY visible or text-like content exists anywhere in the main
@@ -19,3 +20,13 @@ count as visible text and must return risk.
 Return safe only when no visible text or text-like content exists. Ordinary
 non-text pictograms and purely decorative shapes may remain. Return unknown
 when image quality prevents a reliable decision. Output JSON only.
+
+Classify main_image_quality independently from the zero-text status:
+- preferred: one clear product or the exact sold set, isolated and centered on
+  a clean white or near-white background; no collage, lifestyle scene,
+  installation scene, diagram, border, or decorative layout.
+- acceptable: a clear single-view product-focused image on a simple non-white
+  background.
+- fallback: collage, multi-panel layout, lifestyle or installation scene,
+  diagram, packaging-led image, crowded composition, or decorative layout.
+- unknown: the composition cannot be judged reliably.

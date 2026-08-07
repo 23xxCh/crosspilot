@@ -6,7 +6,13 @@ import re
 from typing import Any
 IMAGE_RISK_SCHEMA_VERSION = 3
 IMAGE_RISK_POLICY_VERSION = 'structured_image_text_translate_v2'
-MAIN_TEXT_POLICY_VERSION = 'main_text_zero_text_v2'
+MAIN_TEXT_POLICY_VERSION = 'main_text_zero_text_v3'
+MAIN_IMAGE_QUALITIES = {
+    'preferred',
+    'acceptable',
+    'fallback',
+    'unknown',
+}
 CONFIRMED_QUARANTINE_PATH = Path(__file__).resolve().parents[2] / 'config' / 'amazon_image_quarantine_ids.json'
 RISK_REASONS = {
     'brand_logo',
@@ -100,6 +106,14 @@ def normalize_main_text_assessment(value: object) -> dict[str, Any] | None:
     if normalized["status"] == "risk":
         normalized["reasons"] = ["visible_text"]
         normalized["risk_categories"] = ["visible_text"]
+    quality = re.sub(
+        '[^a-z0-9_]+',
+        '_',
+        str(value.get('main_image_quality') or '').lower(),
+    ).strip('_')
+    normalized['main_image_quality'] = (
+        quality if quality in MAIN_IMAGE_QUALITIES else 'unknown'
+    )
     normalized["policy_version"] = MAIN_TEXT_POLICY_VERSION
     return normalized
 
@@ -108,6 +122,7 @@ def unknown_main_text_assessment(
 ) -> dict[str, Any]:
     result = unknown_image_assessment(evidence)
     result["policy_version"] = MAIN_TEXT_POLICY_VERSION
+    result["main_image_quality"] = "unknown"
     return result
 
 def _parse_assessment_response(

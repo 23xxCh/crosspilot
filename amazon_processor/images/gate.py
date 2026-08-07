@@ -28,6 +28,15 @@ def _generated_image_review_mode() -> str:
 
     return str(get("GENERATED_IMAGE_REVIEW_MODE", "strict")).strip().lower()
 
+
+def _image_processing_mode() -> str:
+    from ..config.env import get
+
+    mode = str(get("IMAGE_PROCESSING_MODE", "select_existing")).strip().lower()
+    if mode not in {"select_existing", "generate_replacements"}:
+        return "select_existing"
+    return mode
+
 def cached_generation(cache: dict[str, Any], generation_version: str, kind: str, source_url: str, main_text_version: str | None=None) -> str:
     """Return only a current generated URL that passed structured review."""
     key = f'{kind}:{source_url}'
@@ -690,6 +699,305 @@ def _review_main_text_images(main_urls: list[str], *, assessments: dict[str, dic
     review_stats['batch_size'] = batch_size
     concurrency_stats['amazon_main_text_review'] = review_stats
 
+
+def _select_existing_images(
+    data: list[dict[str, Any]],
+    *,
+    usage: dict[str, list[dict[str, Any]]],
+    row_by_id: dict[str, dict[str, Any]],
+    assessments: dict[str, dict[str, Any]],
+    main_text_assessments: dict[str, dict[str, Any]],
+    cache: dict[str, Any],
+    cache_path: str | None,
+    provider_getter: Callable[[], object],
+    concurrency_stats: dict[str, Any],
+    runtime_metrics: dict[str, Any],
+    quality_issues: list[str],
+    effective_assessment: Callable[[str, str, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Prefer a clean white-background source image and never generate."""
+    candidates: dict[str, list[tuple[str, str, int]]] = {}
+    candidate_index: dict[str, int] = {}
+    selected: dict[str, tuple[str, str, int]] = {}
+    selected_rank: dict[str, int] = {}
+    quality_rank = {
+        'preferred': 3,
+        'acceptable': 2,
+        'fallback': 1,
+        'unknown': 0,
+    }
+
+    for product_id, row in row_by_id.items():
+        product_images = [str(row.get('main_img') or '').strip()]
+        product_images.extend(
+            str(value).strip() for value in row.get('extra_imgs') or []
+        )
+        ordered = list(dict.fromkeys(value for value in product_images if value))
+        safe_candidates: list[tuple[str, str, int]] = []
+        for position, url in enumerate(ordered):
+            original_role = 'main' if position == 0 else 'attachment'
+            if assessment_status(
+                effective_assessment(product_id, original_role, url)
+            ) == 'safe':
+                safe_candidates.append((url, original_role, position))
+        candidates[product_id] = safe_candidates
+        candidate_index[product_id] = 0
+
+    unresolved = set(row_by_id)
+    while unresolved:
+        round_urls: list[str] = []
+        exhausted: set[str] = set()
+        for product_id in sorted(unresolved):
+            position = candidate_index[product_id]
+            values = candidates[product_id]
+            if position >= len(values):
+                exhausted.add(product_id)
+                continue
+            url = values[position][0]
+            if url not in round_urls:
+                round_urls.append(url)
+        unresolved.difference_update(exhausted)
+        if not unresolved:
+            break
+        _review_main_text_images(
+            round_urls,
+            assessments=main_text_assessments,
+            cache=cache,
+            cache_path=cache_path,
+            provider_getter=provider_getter,
+            concurrency_stats=concurrency_stats,
+        )
+        resolved_this_round: set[str] = set()
+        for product_id in sorted(unresolved):
+            candidate = candidates[product_id][candidate_index[product_id]]
+            text_assessment = main_text_assessments.get(candidate[0])
+            if assessment_status(text_assessment) == 'safe':
+                rank = quality_rank.get(
+                    str((text_assessment or {}).get('main_image_quality')),
+                    0,
+                )
+                if rank > selected_rank.get(product_id, -1):
+                    selected[product_id] = candidate
+                    selected_rank[product_id] = rank
+                if rank == quality_rank['preferred']:
+                    resolved_this_round.add(product_id)
+                else:
+                    candidate_index[product_id] += 1
+            else:
+                candidate_index[product_id] += 1
+        unresolved.difference_update(resolved_this_round)
+
+    pending: list[dict[str, Any]] = []
+    attachment_deleted = 0
+    variant_deleted = 0
+    main_reselected = 0
+    main_original_retained = 0
+
+    for product_id, row in row_by_id.items():
+        original_main = str(row.get('main_img') or '').strip()
+        original_extras = [
+            str(value).strip()
+            for value in row.get('extra_imgs') or []
+            if str(value).strip()
+        ]
+        product_images = list(dict.fromkeys(
+            [value for value in [original_main, *original_extras] if value]
+        ))
+        original_role = {
+            url: ('main' if index == 0 else 'attachment')
+            for index, url in enumerate(product_images)
+        }
+        original_position = {
+            url: index for index, url in enumerate(product_images)
+        }
+        image_records: list[dict[str, Any]] = []
+
+        def source_record(url: str, final_role: str) -> dict[str, Any]:
+            source_role = original_role.get(url, final_role)
+            general = effective_assessment(product_id, source_role, url)
+            text = main_text_assessments.get(url)
+            record = assessment_record(
+                url=url,
+                role=final_role,
+                assessment=general,
+                text_assessment=text,
+                source='source',
+            )
+            record['original_role'] = source_role
+            record['original_position'] = original_position.get(url, 0)
+            record['main_eligible'] = (
+                assessment_status(general) == 'safe'
+                and assessment_status(text) == 'safe'
+            )
+            return record
+
+        selected_value = selected.get(product_id)
+        if selected_value is None:
+            row['_main_selection_pending'] = True
+            for url in product_images:
+                record = source_record(url, original_role[url])
+                record['image_action'] = 'pending_main_candidate'
+                image_records.append(record)
+            for position, url in enumerate(row.get('var_imgs') or []):
+                url = str(url or '').strip()
+                if not url:
+                    continue
+                general = effective_assessment(product_id, 'variant', url)
+                record = assessment_record(
+                    url=url,
+                    role='variant',
+                    assessment=general,
+                    source='source',
+                )
+                record['original_role'] = 'variant'
+                record['original_position'] = position
+                record['main_eligible'] = False
+                record['image_action'] = 'keep' if assessment_status(general) == 'safe' else 'delete_variant'
+                image_records.append(record)
+            row['_image_assessments'] = sorted(
+                image_records,
+                key=lambda item: (
+                    ROLE_PRIORITY.get(item['role'], 9),
+                    int(item.get('original_position') or 0),
+                ),
+            )
+            pending.append({
+                'product_id': product_id,
+                'site': str(row.get('site') or row.get('产品站点') or 'US'),
+                'title': str(row.get('title') or ''),
+                'reason': 'missing_clean_main',
+                'images': list(row['_image_assessments']),
+            })
+            continue
+
+        selected_url, selected_original_role, _ = selected_value
+        row.pop('_main_selection_pending', None)
+        row['main_img'] = selected_url
+        kept_extras: list[str] = []
+        for url in product_images:
+            if url == selected_url:
+                continue
+            source_role = original_role[url]
+            if assessment_status(
+                effective_assessment(product_id, source_role, url)
+            ) == 'safe':
+                kept_extras.append(url)
+            else:
+                attachment_deleted += 1
+                record = source_record(url, 'attachment')
+                record['image_action'] = 'delete_attachment'
+                image_records.append(record)
+        row['extra_imgs'] = kept_extras
+        main_record = source_record(selected_url, 'main')
+        main_record['selection_action'] = (
+            'retain_main'
+            if selected_original_role == 'main'
+            else 'promote_to_main'
+        )
+        main_record['image_action'] = 'keep'
+        image_records.append(main_record)
+        for url in kept_extras:
+            record = source_record(url, 'attachment')
+            record['selection_action'] = (
+                'demote_from_main'
+                if original_role[url] == 'main'
+                else 'keep_attachment'
+            )
+            record['image_action'] = 'keep'
+            image_records.append(record)
+
+        kept_variants: list[str] = []
+        for position, value in enumerate(row.get('var_imgs') or []):
+            url = str(value or '').strip()
+            if not url:
+                continue
+            general = effective_assessment(product_id, 'variant', url)
+            record = assessment_record(
+                url=url,
+                role='variant',
+                assessment=general,
+                source='source',
+            )
+            record['original_role'] = 'variant'
+            record['original_position'] = position
+            record['main_eligible'] = False
+            if assessment_status(general) == 'safe':
+                kept_variants.append(url)
+                record['image_action'] = 'keep'
+            else:
+                variant_deleted += 1
+                record['image_action'] = 'delete_variant'
+            image_records.append(record)
+        row['var_imgs'] = kept_variants
+        row['var_img'] = kept_variants[0] if kept_variants else ''
+        row['_image_assessments'] = sorted(
+            image_records,
+            key=lambda item: (
+                ROLE_PRIORITY.get(item['role'], 9),
+                int(item.get('original_position') or 0),
+            ),
+        )
+        if selected_url == original_main:
+            main_original_retained += 1
+        else:
+            main_reselected += 1
+
+    if pending:
+        quality_issues.append(
+            f'{len(pending)} 个商品没有安全且无文字的原图主图，已转待人工审核'
+        )
+    runtime_metrics['pending_main_products'] = pending
+    runtime_metrics['quarantined_products'] = []
+    runtime_metrics['image_assessments'] = {
+        url: dict(value) for url, value in assessments.items()
+    }
+    runtime_metrics['main_text_assessments'] = {
+        url: dict(value) for url, value in main_text_assessments.items()
+    }
+    status_counts = {
+        status: sum(
+            1 for value in assessments.values()
+            if assessment_status(value) == status
+        )
+        for status in ('safe', 'risk', 'unknown')
+    }
+    text_status_counts = {
+        status: sum(
+            1 for value in main_text_assessments.values()
+            if assessment_status(value) == status
+        )
+        for status in ('safe', 'risk', 'unknown')
+    }
+    runtime_metrics['image_safety_gate'] = {
+        'processing_mode': 'select_existing',
+        'source_references': sum(len(items) for items in usage.values()),
+        'unique_source_images': len(usage),
+        'source_status_counts': status_counts,
+        'main_text_status_counts': text_status_counts,
+        'main_candidates_reviewed': len(main_text_assessments),
+        'main_original_retained': main_original_retained,
+        'main_reselected': main_reselected,
+        'preferred_main_selected': sum(
+            1 for rank in selected_rank.values()
+            if rank == quality_rank['preferred']
+        ),
+        'attachment_deleted': attachment_deleted,
+        'variant_deleted': variant_deleted,
+        'pending_products': len(pending),
+        'generated_main': 0,
+        'generated_variant': 0,
+        'generated_attachment': 0,
+        'generation_requests': 0,
+    }
+    runtime_metrics['image_remediation'] = {
+        'requested': 0,
+        'succeeded': 0,
+        'failed': 0,
+        'generated_candidates_reviewed': 0,
+    }
+    save_cache(cache_path, cache)
+    return list(data)
+
 def run_structured_image_safety_gate(data: list[dict[str, Any]], cache_path: str | None=None, quality_issues: list[str] | None=None, progress: Callable[[int, int], None] | None=None, runtime_metrics: dict[str, Any] | None=None, provider_getter: Callable[[], object] | None=None) -> list[dict[str, Any]]:
     """Audit every source image, remediate risks, and fail closed."""
     if provider_getter is None:
@@ -759,6 +1067,21 @@ def run_structured_image_safety_gate(data: list[dict[str, Any]], cache_path: str
     usage, row_by_id = _index_images(data)
     urls = sorted(usage)
     _review_source_images(urls, assessments=assessments, cache=cache, cache_path=cache_path, provider_getter=provider_getter, concurrency_stats=concurrency_stats, progress=progress)
+    if _image_processing_mode() == 'select_existing':
+        return _select_existing_images(
+            data,
+            usage=usage,
+            row_by_id=row_by_id,
+            assessments=assessments,
+            main_text_assessments=main_text_assessments,
+            cache=cache,
+            cache_path=cache_path,
+            provider_getter=provider_getter,
+            concurrency_stats=concurrency_stats,
+            runtime_metrics=runtime_metrics,
+            quality_issues=quality_issues,
+            effective_assessment=effective_assessment,
+        )
     main_urls = sorted(
         url
         for url, items in usage.items()
@@ -1024,7 +1347,7 @@ def run_structured_image_safety_gate(data: list[dict[str, Any]], cache_path: str
             'block_publish',
         )
     }
-    safety_metrics = {'policy_version': IMAGE_RISK_POLICY_VERSION, 'source_images': len(urls), 'reviewed': len(assessments), **status_counts, 'actions': action_counts, 'main_text_reviewed': len(main_text_assessments), 'main_text_safe': text_status_counts['safe'], 'main_text_risk': text_status_counts['risk'], 'main_text_unknown': text_status_counts['unknown'], 'intrinsic_brand_confirmed': intrinsic_confirmed, 'confirmation_conflicts': confirmation_conflicts, 'attachment_deleted': attachment_deleted, 'generated_reviewed': generated_candidates_reviewed, 'generated_main': generated_main, 'generated_variant': generated_variant, 'generated_attachment': generated_attachment, 'failed_main': failed_main, 'failed_variant': failed_variant, 'failed_attachment': failed_attachment, 'publish_blockers': len(publish_blockers), 'quarantined_products': len(quarantine_records), 'retained_products': len(retained), 'manual_overrides_applied': sum((1 for product_id, row in row_by_id.items() for url, role, _position in row_image_roles(row) if (product_id, role, url) in manual_overrides)), 'human_confirmed_quarantine': 0}
+    safety_metrics = {'processing_mode': 'generate_replacements', 'policy_version': IMAGE_RISK_POLICY_VERSION, 'source_images': len(urls), 'reviewed': len(assessments), **status_counts, 'actions': action_counts, 'main_text_reviewed': len(main_text_assessments), 'main_text_safe': text_status_counts['safe'], 'main_text_risk': text_status_counts['risk'], 'main_text_unknown': text_status_counts['unknown'], 'intrinsic_brand_confirmed': intrinsic_confirmed, 'confirmation_conflicts': confirmation_conflicts, 'attachment_deleted': attachment_deleted, 'generated_reviewed': generated_candidates_reviewed, 'generated_main': generated_main, 'generated_variant': generated_variant, 'generated_attachment': generated_attachment, 'failed_main': failed_main, 'failed_variant': failed_variant, 'failed_attachment': failed_attachment, 'publish_blockers': len(publish_blockers), 'quarantined_products': len(quarantine_records), 'retained_products': len(retained), 'manual_overrides_applied': sum((1 for product_id, row in row_by_id.items() for url, role, _position in row_image_roles(row) if (product_id, role, url) in manual_overrides)), 'human_confirmed_quarantine': 0}
     runtime_metrics['image_safety_gate'] = safety_metrics
     runtime_metrics['quarantined_products'] = quarantine_records
     runtime_metrics['image_assessments'] = {url: dict(value) for url, value in assessments.items()}

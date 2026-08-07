@@ -53,6 +53,29 @@ def _atomic_json(path: Path, value: dict) -> None:
             temp.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _pipeline_provider_metrics(run_metrics: dict | None) -> dict:
+    """Expose the pipeline snapshot separately from review translation calls."""
+    values = run_metrics if isinstance(run_metrics, dict) else {}
+    calls = int(values.get("api_calls") or 0)
+    errors = int(values.get("api_errors") or 0)
+    return {
+        "api_calls": calls,
+        "api_errors": errors,
+        "api_success_rate": (
+            round(1 - errors / calls, 3) if calls else None
+        ),
+        "http_attempts": int(values.get("http_attempts") or 0),
+        "http_errors": int(values.get("http_errors") or 0),
+        "http_retries": int(values.get("http_retries") or 0),
+        "circuit_open": int(values.get("circuit_open") or 0),
+        "fallback_attempts": int(values.get("fallback_attempts") or 0),
+        "fallback_successes": int(values.get("fallback_successes") or 0),
+        "fallback_failures": int(values.get("fallback_failures") or 0),
+        "http_status": dict(values.get("http_status") or {}),
+        "by_operation": dict(values.get("api_by_operation") or {}),
+    }
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 from io import BytesIO
@@ -165,7 +188,7 @@ def _row_images(payload: dict, mapping: dict[str, dict], index: int, audit_image
         audit = audit_for(url, role_key)
         assessment = audit.get('assessment') or {}
         text_assessment = audit.get('text_assessment') or {}
-        return {'role': role, 'role_key': role_key, 'position': position, 'url': url, 'local_path': (mapping.get(url) or {}).get('path', ''), 'download_ok': bool((mapping.get(url) or {}).get('ok')), 'source': audit.get('source') or 'source', 'source_url': audit.get('source_url') or '', 'source_local_path': (mapping.get(audit.get('source_url')) or {}).get('path', '') if audit.get('source_url') else '', 'assessment': assessment, 'text_assessment': text_assessment, 'source_text_assessment': audit.get('source_text_assessment') or {}, 'image_action': audit.get('image_action') or '', 'source_image_action': audit.get('source_image_action') or '', 'source_detected_text': list(audit.get('source_detected_text') or []), 'detected_text': list(audit.get('detected_text') or text_assessment.get('detected_text') or []), 'text_evidence': audit.get('text_evidence') or text_assessment.get('evidence') or '', 'generation_route_offset': audit.get('generation_route_offset'), 'candidates_reviewed': audit.get('candidates_reviewed'), 'accepted_without_machine_review': bool(audit.get('accepted_without_machine_review')), 'decision': audit.get('decision') or '', 'evidence': audit.get('evidence') or assessment.get('evidence') or ''}
+        return {'role': role, 'role_key': role_key, 'position': position, 'url': url, 'local_path': (mapping.get(url) or {}).get('path', ''), 'download_ok': bool((mapping.get(url) or {}).get('ok')), 'source': audit.get('source') or 'source', 'source_url': audit.get('source_url') or '', 'source_local_path': (mapping.get(audit.get('source_url')) or {}).get('path', '') if audit.get('source_url') else '', 'assessment': assessment, 'text_assessment': text_assessment, 'source_text_assessment': audit.get('source_text_assessment') or {}, 'image_action': audit.get('image_action') or '', 'source_image_action': audit.get('source_image_action') or '', 'source_detected_text': list(audit.get('source_detected_text') or []), 'detected_text': list(audit.get('detected_text') or text_assessment.get('detected_text') or []), 'text_evidence': audit.get('text_evidence') or text_assessment.get('evidence') or '', 'generation_route_offset': audit.get('generation_route_offset'), 'candidates_reviewed': audit.get('candidates_reviewed'), 'accepted_without_machine_review': bool(audit.get('accepted_without_machine_review')), 'main_eligible': bool(audit.get('main_eligible')), 'original_role': audit.get('original_role') or role_key, 'selection_action': audit.get('selection_action') or '', 'decision': audit.get('decision') or '', 'evidence': audit.get('evidence') or assessment.get('evidence') or ''}
     images = []
     for position, url in enumerate(payload['产品图片链接'][index]):
         role = '主图' if position == 0 else f'附图 {position}'
@@ -215,7 +238,7 @@ def build_quarantine_rows(quarantine_products: list[dict], mapping: dict[str, di
                 continue
             assessment = image.get('assessment') or {}
             text_assessment = image.get('text_assessment') or {}
-            images.append({'role': {'main': '主图', 'variant': '变种图', 'attachment': '附图'}.get(image.get('role'), str(image.get('role') or '图片')), 'role_key': image.get('role') or 'attachment', 'position': position, 'url': url, 'local_path': (mapping.get(url) or {}).get('path', ''), 'download_ok': bool((mapping.get(url) or {}).get('ok')), 'source': image.get('source') or 'source', 'source_url': image.get('source_url') or '', 'source_local_path': (mapping.get(image.get('source_url')) or {}).get('path', '') if image.get('source_url') else '', 'assessment': assessment, 'text_assessment': text_assessment, 'source_text_assessment': image.get('source_text_assessment') or {}, 'image_action': image.get('image_action') or '', 'source_image_action': image.get('source_image_action') or '', 'source_detected_text': list(image.get('source_detected_text') or []), 'detected_text': list(image.get('detected_text') or text_assessment.get('detected_text') or []), 'text_evidence': image.get('text_evidence') or text_assessment.get('evidence') or '', 'generation_route_offset': image.get('generation_route_offset'), 'candidates_reviewed': image.get('candidates_reviewed'), 'accepted_without_machine_review': bool(image.get('accepted_without_machine_review')), 'decision': image.get('decision') or '', 'evidence': image.get('evidence') or assessment.get('evidence') or ''})
+            images.append({'role': {'main': '主图', 'variant': '变种图', 'attachment': '附图'}.get(image.get('role'), str(image.get('role') or '图片')), 'role_key': image.get('role') or 'attachment', 'position': position, 'url': url, 'local_path': (mapping.get(url) or {}).get('path', ''), 'download_ok': bool((mapping.get(url) or {}).get('ok')), 'source': image.get('source') or 'source', 'source_url': image.get('source_url') or '', 'source_local_path': (mapping.get(image.get('source_url')) or {}).get('path', '') if image.get('source_url') else '', 'assessment': assessment, 'text_assessment': text_assessment, 'source_text_assessment': image.get('source_text_assessment') or {}, 'image_action': image.get('image_action') or '', 'source_image_action': image.get('source_image_action') or '', 'source_detected_text': list(image.get('source_detected_text') or []), 'detected_text': list(image.get('detected_text') or text_assessment.get('detected_text') or []), 'text_evidence': image.get('text_evidence') or text_assessment.get('evidence') or '', 'generation_route_offset': image.get('generation_route_offset'), 'candidates_reviewed': image.get('candidates_reviewed'), 'accepted_without_machine_review': bool(image.get('accepted_without_machine_review')), 'main_eligible': bool(image.get('main_eligible')), 'original_role': image.get('original_role') or image.get('role') or 'attachment', 'selection_action': image.get('selection_action') or '', 'decision': image.get('decision') or '', 'evidence': image.get('evidence') or assessment.get('evidence') or ''})
         bullets = source_row.get('bullets') or []
         localized = {
             'title': str(source_row.get('title') or item.get('title') or ''),
@@ -244,7 +267,7 @@ from ..schema import AMAZON_JSON_OUTPUT_FIELDS, validate_columnar_payload
 from .html import render_html
 from .translation import translate_payload
 
-def export_review(input_path: str | Path, output_dir: str | Path, *, translate_workers: int=30, download_workers: int=32, audit_by_product: dict[str, list[dict]] | None=None, quarantine_products: list[dict] | None=None, shared_cache_dir: str | Path | None=None, translation_cache_path: str | Path | None=None, run_id: str | None=None, run_metrics: dict | None=None) -> dict:
+def export_review(input_path: str | Path, output_dir: str | Path, *, translate_workers: int=30, download_workers: int=32, audit_by_product: dict[str, list[dict]] | None=None, quarantine_products: list[dict] | None=None, shared_cache_dir: str | Path | None=None, translation_cache_path: str | Path | None=None, run_id: str | None=None, run_metrics: dict | None=None, allow_empty_released: bool=False) -> dict:
     input_path = Path(input_path)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -253,9 +276,21 @@ def export_review(input_path: str | Path, output_dir: str | Path, *, translate_w
     shared_cache = Path(shared_cache_dir) if shared_cache_dir is not None else None
     translation_cache = Path(translation_cache_path) if translation_cache_path is not None else output_dir / '翻译缓存.json'
     payload = _load_json(input_path)
-    row_count = validate_columnar_payload(payload, required_fields=AMAZON_JSON_OUTPUT_FIELDS)
+    empty_released = (
+        allow_empty_released
+        and all(
+            isinstance(payload.get(field), list)
+            for field in AMAZON_JSON_OUTPUT_FIELDS
+        )
+        and not payload.get('商品id')
+    )
+    row_count = 0 if empty_released else validate_columnar_payload(payload, required_fields=AMAZON_JSON_OUTPUT_FIELDS)
     reload_provider()
-    translations, translation_failures, provider_metrics = translate_payload(payload, translation_cache, workers=translate_workers)
+    translations, translation_failure_rows, provider_metrics = translate_payload(payload, translation_cache, workers=translate_workers)
+    if isinstance(run_metrics, dict):
+        # Keep review translation calls separate from the pipeline snapshot;
+        # delivery will combine both into one canonical public metric object.
+        run_metrics["review_translation_provider_metrics"] = provider_metrics
     extra_urls = []
     for images in audit_by_product.values():
         for image in images:
@@ -267,7 +302,46 @@ def export_review(input_path: str | Path, output_dir: str | Path, *, translate_w
     rows = build_review_rows(payload, translations, mapping, audit_by_product=audit_by_product)
     rows.extend(build_quarantine_rows(quarantine_products, mapping, row_offset=len(rows)))
     image_occurrences = sum((len(row['images']) for row in rows))
-    summary = {'version': 2, 'run_id': run_id or output_dir.name, 'products': len(rows), 'released_products': row_count, 'quarantined_products': len(quarantine_products), 'translation_failures': translation_failures, 'image_occurrences': image_occurrences, 'unique_images': len(mapping), 'downloaded_unique_images': sum((item.get('ok') is True for item in mapping.values())), 'image_failures': image_failures, 'provider_metrics': provider_metrics, 'run_metrics': run_metrics or {}, 'source': str(input_path.resolve())}
+    actual_source = str(
+        ((run_metrics or {}).get('source') or {}).get('path')
+        or input_path.resolve()
+    )
+    translation_failures = []
+    for row_number in translation_failure_rows:
+        index = int(row_number) - 1
+        if not 0 <= index < len(payload.get("商品id") or []):
+            continue
+        translation_failures.append({
+            "row": int(row_number),
+            "product_id": str(payload["商品id"][index]),
+            "site": str((payload.get("产品站点") or ["US"] * len(payload["商品id"]))[index]),
+            "fields": ["title", "subtitle", "description", "bullets", "keywords"],
+            "status": "fallback_source_copy",
+            "message": "中文终审翻译未通过校验，终审包暂使用站点原文",
+        })
+    summary = {
+        'version': 2,
+        'run_id': run_id or output_dir.name,
+        'products': len(rows),
+        'released_products': row_count,
+        'quarantined_products': len(quarantine_products),
+        'translation_failures': translation_failures,
+        'image_occurrences': image_occurrences,
+        'unique_images': len(mapping),
+        'downloaded_unique_images': sum(
+            (item.get('ok') is True for item in mapping.values())
+        ),
+        'image_failures': image_failures,
+        # Keep the old field for compatibility, while exposing a clear
+        # stage-by-stage view for operators and the status manifest.
+        'provider_metrics': provider_metrics,
+        'provider_metrics_by_stage': {
+            'pipeline': _pipeline_provider_metrics(run_metrics),
+            'review_translation': provider_metrics,
+        },
+        'run_metrics': run_metrics or {},
+        'source': actual_source,
+    }
     _atomic_json(output_dir / '审核数据.json', {'version': 2, 'run_id': summary['run_id'], 'summary': summary, 'products': rows, 'images': mapping})
     (output_dir / '终审包.html').write_text(
         render_html(rows, summary, formal_payload=payload),

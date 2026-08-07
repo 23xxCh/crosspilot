@@ -42,6 +42,7 @@ def text_assessment(
     detected_text: list[str] | None = None,
     placement: str = "none",
     evidence: str = "zero-text test evidence",
+    main_image_quality: str = "preferred",
 ) -> dict:
     return normalize_main_text_assessment({
         "status": status,
@@ -50,6 +51,7 @@ def text_assessment(
         "detected_text": detected_text or [],
         "confidence": 0.95,
         "evidence": evidence,
+        "main_image_quality": main_image_quality,
     })
 
 def test_main_text_parser_marks_functional_text_as_risk() -> None:
@@ -64,7 +66,22 @@ def test_main_text_parser_marks_functional_text_as_risk() -> None:
 
     assert result["status"] == "risk"
     assert result["detected_text"] == ["A8C"]
-    assert result["policy_version"] == "main_text_zero_text_v2"
+    assert result["policy_version"] == "main_text_zero_text_v3"
+
+
+def test_main_text_parser_preserves_main_image_quality() -> None:
+    result = parse_main_text_assessment_response(json.dumps({
+        "status": "safe",
+        "reasons": [],
+        "placement": "none",
+        "detected_text": [],
+        "confidence": 0.96,
+        "evidence": "Single product isolated on a clean white background.",
+        "main_image_quality": "preferred",
+    }))
+
+    assert result["status"] == "safe"
+    assert result["main_image_quality"] == "preferred"
 
 
 def test_batch_parser_preserves_image_index_order() -> None:
@@ -156,11 +173,18 @@ def run_gate(
     provider: StructuredProvider,
     tmp_path,
     monkeypatch,
+    *,
+    mode: str = "generate_replacements",
 ):
     monkeypatch.setattr(
         remediation,
         "validate_image_url",
         lambda _url: (True, ""),
+    )
+    monkeypatch.setattr(
+        amazon_image_safety,
+        "_image_processing_mode",
+        lambda: mode,
     )
     metrics = {}
     result = amazon_image_safety.run_structured_image_safety_gate(
@@ -170,6 +194,229 @@ def run_gate(
         provider_getter=lambda: provider,
     )
     return result, metrics
+
+
+def test_select_existing_promotes_first_clean_attachment_without_generation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    main = "https://img.example/original-main.jpg"
+    text_attachment = "https://img.example/dimension.jpg"
+    clean_attachment = "https://img.example/clean.jpg"
+    risk_attachment = "https://img.example/logo.jpg"
+    unknown_attachment = "https://img.example/unknown.jpg"
+    safe_variant = "https://img.example/variant-safe.jpg"
+    risk_variant = "https://img.example/variant-risk.jpg"
+    provider = StructuredProvider(
+        {
+            main: assessment("safe"),
+            text_attachment: assessment("safe"),
+            clean_attachment: assessment("safe"),
+            risk_attachment: assessment(
+                "risk",
+                reasons=["brand_logo"],
+                placement="overlay",
+            ),
+            unknown_attachment: assessment("unknown"),
+            safe_variant: assessment("safe"),
+            risk_variant: assessment(
+                "risk",
+                reasons=["seller_watermark"],
+                placement="overlay",
+            ),
+        },
+        text_assessments={
+            main: text_assessment("risk", detected_text=["START"]),
+            text_attachment: text_assessment(
+                "risk",
+                detected_text=["10 CM"],
+            ),
+            clean_attachment: text_assessment("safe"),
+        },
+    )
+    rows = [{
+        "id": "select-existing",
+        "title": "Product",
+        "main_img": main,
+        "extra_imgs": [
+            text_attachment,
+            clean_attachment,
+            risk_attachment,
+            unknown_attachment,
+        ],
+        "var_img": safe_variant,
+        "var_imgs": [safe_variant, risk_variant],
+    }]
+
+    result, metrics = run_gate(
+        rows,
+        provider,
+        tmp_path,
+        monkeypatch,
+        mode="select_existing",
+    )
+
+    assert result[0]["main_img"] == clean_attachment
+    assert result[0]["extra_imgs"] == [main, text_attachment]
+    assert result[0]["var_imgs"] == [safe_variant]
+    assert provider.text_assess_calls == [
+        main,
+        text_attachment,
+        clean_attachment,
+    ]
+    assert provider.gen_calls == []
+    safety = metrics["image_safety_gate"]
+    assert safety["processing_mode"] == "select_existing"
+    assert safety["main_reselected"] == 1
+    assert safety["pending_products"] == 0
+    assert safety["attachment_deleted"] == 2
+    assert safety["variant_deleted"] == 1
+    main_record = next(
+        item
+        for item in result[0]["_image_assessments"]
+        if item["role"] == "main" and item["url"] == clean_attachment
+    )
+    assert main_record["original_role"] == "attachment"
+    assert main_record["main_eligible"] is True
+
+
+def test_select_existing_prefers_white_background_product_over_earlier_collage(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    collage = "https://img.example/collage.jpg"
+    white_background = "https://img.example/white-background.jpg"
+    provider = StructuredProvider(
+        {
+            collage: assessment("safe"),
+            white_background: assessment("safe"),
+        },
+        text_assessments={
+            collage: text_assessment(
+                "safe",
+                main_image_quality="fallback",
+                evidence="Multiple installation and lifestyle panels.",
+            ),
+            white_background: text_assessment(
+                "safe",
+                main_image_quality="preferred",
+                evidence="Single product isolated on a clean white background.",
+            ),
+        },
+    )
+    rows = [{
+        "id": "prefer-white-background",
+        "title": "Product",
+        "main_img": collage,
+        "extra_imgs": [white_background],
+        "var_img": "",
+        "var_imgs": [],
+    }]
+
+    result, metrics = run_gate(
+        rows,
+        provider,
+        tmp_path,
+        monkeypatch,
+        mode="select_existing",
+    )
+
+    assert result[0]["main_img"] == white_background
+    assert result[0]["extra_imgs"] == [collage]
+    assert provider.text_assess_calls == [collage, white_background]
+    assert metrics["image_safety_gate"]["preferred_main_selected"] == 1
+    assert provider.gen_calls == []
+
+
+def test_select_existing_allows_product_with_only_clean_main(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    main = "https://img.example/main.jpg"
+    risk_attachment = "https://img.example/risk.jpg"
+    provider = StructuredProvider(
+        {
+            main: assessment("safe"),
+            risk_attachment: assessment(
+                "risk",
+                reasons=["brand_logo"],
+                placement="overlay",
+            ),
+        },
+        text_assessments={main: text_assessment("safe")},
+    )
+    rows = [{
+        "id": "main-only",
+        "title": "Product",
+        "main_img": main,
+        "extra_imgs": [risk_attachment],
+        "var_img": "",
+        "var_imgs": [],
+    }]
+
+    result, metrics = run_gate(
+        rows,
+        provider,
+        tmp_path,
+        monkeypatch,
+        mode="select_existing",
+    )
+
+    assert result[0]["main_img"] == main
+    assert result[0]["extra_imgs"] == []
+    assert metrics["image_safety_gate"]["pending_products"] == 0
+    assert provider.gen_calls == []
+
+
+def test_select_existing_records_pending_when_no_clean_main(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    main = "https://img.example/logo-main.jpg"
+    text_attachment = "https://img.example/text.jpg"
+    provider = StructuredProvider(
+        {
+            main: assessment(
+                "risk",
+                reasons=["brand_logo"],
+                placement="product_surface",
+            ),
+            text_attachment: assessment("safe"),
+        },
+        text_assessments={
+            text_attachment: text_assessment(
+                "risk",
+                detected_text=["SIZE"],
+            ),
+        },
+    )
+    rows = [{
+        "id": "pending-main",
+        "site": "US",
+        "title": "Product",
+        "main_img": main,
+        "extra_imgs": [text_attachment],
+        "var_img": "",
+        "var_imgs": [],
+    }]
+
+    result, metrics = run_gate(
+        rows,
+        provider,
+        tmp_path,
+        monkeypatch,
+        mode="select_existing",
+    )
+
+    assert result[0]["_main_selection_pending"] is True
+    assert provider.gen_calls == []
+    assert metrics["image_safety_gate"]["pending_products"] == 1
+    pending = metrics["pending_main_products"][0]
+    assert pending["product_id"] == "pending-main"
+    assert {item["url"] for item in pending["images"]} == {
+        main,
+        text_attachment,
+    }
 
 
 def test_multisite_rows_review_each_unique_image_only_once(

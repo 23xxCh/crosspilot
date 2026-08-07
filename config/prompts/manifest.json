@@ -113,7 +113,7 @@
       "category": "图片安全",
       "path": "images/main_text_free_review.txt",
       "variables": [],
-      "used_by": "主图独立零文字审查；任意文字、数字或伪文字触发局部编辑"
+      "used_by": "主图零文字审查与白底单品图优先级判断"
     },
     {
       "id": "images.main_text_free_review_batch",
@@ -121,7 +121,7 @@
       "category": "图片安全",
       "path": "images/main_text_free_review_batch.txt",
       "variables": [],
-      "used_by": "Agnes 多图主图零文字审查"
+      "used_by": "Agnes 多图主图零文字审查与白底单品图优先级判断"
     },
     {
       "id": "images.review",

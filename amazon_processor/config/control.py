@@ -32,6 +32,21 @@ _BACKUP_NAME_RE = re.compile(r"^[0-9]{8}_[0-9]{6}_[0-9a-f]{6}$")
 
 RUNTIME_FIELDS = (
     {
+        "key": "image_processing_mode",
+        "label": "图片处理模式",
+        "type": "enum",
+        "options": (
+            {
+                "value": "select_existing",
+                "label": "只审图并选择原图（默认，不生图）",
+            },
+            {
+                "value": "generate_replacements",
+                "label": "风险图局部编辑（启用生图）",
+            },
+        ),
+    },
+    {
         "key": "text_concurrency",
         "label": "文本并发",
         "type": "int",
@@ -236,6 +251,16 @@ def _validate_runtime(settings: dict[str, Any]) -> None:
             raise ConfigurationError(f"runtime 缺少 {key}")
         raw = runtime[key]
         expected = field["type"]
+        if expected == "enum":
+            allowed = {
+                str(item["value"])
+                for item in field.get("options", ())
+            }
+            if not isinstance(raw, str) or raw not in allowed:
+                raise ConfigurationError(
+                    f"runtime.{key} 必须是: {', '.join(sorted(allowed))}"
+                )
+            continue
         if isinstance(raw, bool):
             raise ConfigurationError(f"runtime.{key} 必须是数字")
         try:

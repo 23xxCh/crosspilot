@@ -716,10 +716,16 @@
           <div><h2>并发与稳定性</h2><p>这里控制文本、审图、生图并发，以及 Agnes 503 快速重试、熔断和恢复策略。超出安全范围的值不能保存。</p></div>
         </div>
         <div class="panel runtime-grid">
-          ${serverState.runtime_fields.map(field => `<label>${escapeHtml(field.label)}
-            <input type="number" data-runtime="${escapeHtml(field.key)}" value="${escapeHtml(runtime[field.key])}" min="${field.min}" max="${field.max}" step="${field.step}" ${serverState.processing ? "disabled" : ""}>
-            <small>${field.min} – ${field.max}</small>
-          </label>`).join("")}
+          ${serverState.runtime_fields.map(field => field.type === "enum"
+            ? `<label>${escapeHtml(field.label)}
+                <select data-runtime="${escapeHtml(field.key)}" ${serverState.processing ? "disabled" : ""}>
+                  ${(field.options || []).map(option => `<option value="${escapeHtml(option.value)}" ${runtime[field.key] === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+                </select>
+              </label>`
+            : `<label>${escapeHtml(field.label)}
+                <input type="number" data-runtime="${escapeHtml(field.key)}" value="${escapeHtml(runtime[field.key])}" min="${field.min}" max="${field.max}" step="${field.step}" ${serverState.processing ? "disabled" : ""}>
+                <small>${field.min} – ${field.max}</small>
+              </label>`).join("")}
         </div>`;
     }
 
@@ -941,9 +947,11 @@
       }
       if (node.dataset.runtime) {
         const meta = serverState.runtime_fields.find(item => item.key === node.dataset.runtime);
-        settings.runtime[node.dataset.runtime] = meta.type === "int"
-          ? Number.parseInt(node.value, 10)
-          : Number.parseFloat(node.value);
+        settings.runtime[node.dataset.runtime] = meta.type === "enum"
+          ? node.value
+          : meta.type === "int"
+            ? Number.parseInt(node.value, 10)
+            : Number.parseFloat(node.value);
       }
       if (node.id === "prompt-textarea") {
         promptDrafts[activePrompt] = node.value;

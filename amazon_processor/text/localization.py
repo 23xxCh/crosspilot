@@ -21,6 +21,7 @@ from ..providers import (
 )
 from ..quality import (
     AMAZON_BULLET_CONCURRENCY,
+    add_quality_issue,
     missing_factual_markers,
     split_keywords,
     unexpected_brand_markers,
@@ -31,6 +32,7 @@ from .locale import (
     market_prompt_values,
     normalize_localized_listing_fields,
     normalize_localized_title,
+    sanitize_localized_description,
     sanitize_localized_subtitle,
 )
 
@@ -39,10 +41,35 @@ LOCALIZATION_POLICY_VERSION = "multi-market-localization-v3"
 TEXT_FIELDS = ("title", "subtitle", "desc", "bullets", "keywords")
 _prompts = get_prompt_registry()
 _cache_lock = threading.Lock()
+_LANGUAGE_REVIEW_PREFIXES = (
+    "language_title:",
+    "language_subtitle:",
+    "language_keywords:",
+)
 
 
 class LocalizationValidationError(ValueError):
     """A model responded, but the listing still violates release rules."""
+
+
+def _language_review_warnings(row: dict) -> list[str]:
+    return [
+        value
+        for value in localization_violations(row)
+        if value.startswith(_LANGUAGE_REVIEW_PREFIXES)
+    ]
+
+
+def _record_language_review_warnings(row: dict) -> list[str]:
+    warnings = _language_review_warnings(row)
+    if warnings:
+        row["_localization_warnings"] = list(dict.fromkeys(warnings))
+        add_quality_issue(
+            row,
+            "localization_language_warning",
+            "短文案语言检测提示：" + ", ".join(warnings[:5]),
+        )
+    return warnings
 
 
 def _signature() -> str:
@@ -112,6 +139,7 @@ class LocalizationCache:
                 row[field] = fields.get(field)
                 restored_fields.append(field)
         row["_localization_partial_fields"] = restored_fields
+        _record_language_review_warnings(row)
         if not (legacy or value.get("complete") is True):
             return False
         if _all_violations(row):
@@ -121,6 +149,7 @@ class LocalizationCache:
         return True
 
     def store(self, row: dict) -> None:
+        _record_language_review_warnings(row)
         if _all_violations(row):
             raise LocalizationValidationError("拒绝缓存未通过本地化校验的文案")
         self.entries[_row_key(row)] = {
@@ -366,8 +395,8 @@ def _apply_candidate(row: dict, value: dict) -> dict:
         value.get("subtitle"),
         row.get("site") or "US",
     )
-    candidate["desc"] = _compact_localized_description(
-        value.get("description")
+    candidate["desc"] = sanitize_localized_description(
+        _compact_localized_description(value.get("description"))
     )
     candidate["bullets"] = [
         str(item or "").strip()
@@ -411,7 +440,12 @@ def _fact_violations(row: dict) -> list[str]:
 
 
 def _all_violations(row: dict) -> list[str]:
-    return [*localization_violations(row), *_fact_violations(row)]
+    localization = [
+        value
+        for value in localization_violations(row)
+        if not value.startswith(_LANGUAGE_REVIEW_PREFIXES)
+    ]
+    return [*localization, *_fact_violations(row)]
 
 
 def _repair_one(
@@ -476,6 +510,8 @@ def ensure_localized_rows(
     provider_getter = provider_getter or _default_get_provider
     metrics = runtime_metrics if isinstance(runtime_metrics, dict) else {}
     stats = metrics.setdefault("localization", {})
+    for row in rows:
+        _record_language_review_warnings(row)
     pending = [row for row in rows if _all_violations(row)]
     pending_objects = {id(row) for row in pending}
     for row in rows:
@@ -530,6 +566,14 @@ def ensure_localized_rows(
     stats["cache_hits"] = cache.hits
     stats["cache_writes"] = cache.writes
     stats["completed"] = len(rows)
+    warning_rows = [
+        row for row in rows if row.get("_localization_warnings")
+    ]
+    stats["language_warning_rows"] = len(warning_rows)
+    stats["language_warning_count"] = sum(
+        len(row.get("_localization_warnings") or [])
+        for row in warning_rows
+    )
     return rows
 
 

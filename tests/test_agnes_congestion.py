@@ -436,7 +436,7 @@ def test_agnes_main_text_policy_uses_strict_prompt():
     )
     assert result["status"] == "risk"
     assert result["reasons"] == ["visible_text"]
-    assert result["policy_version"] == "main_text_zero_text_v2"
+    assert result["policy_version"] == "main_text_zero_text_v3"
 
 
 def test_agnes_batch_review_uploads_local_image_data(monkeypatch):

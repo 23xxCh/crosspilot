@@ -31,13 +31,15 @@ _DEGRADED_ISSUE_CODES = {
 class RunResult:
     """Everything a caller needs after one successful processing run."""
 
-    output_path: Path
+    output_path: Path | None
     review_path: Path
     review_data_path: Path
     archived_path: Path | None
     retained_products: int
     quarantined_products: int
     elapsed_s: float
+    published: bool = True
+    pending_product_ids: tuple[str, ...] = ()
 
 
 @dataclass

@@ -32,6 +32,13 @@ def render_html(
         len(formal_payload.get("商品id") or [])
         if formal_payload else 0
     )
+    processing_mode = str(
+        (((summary.get("run_metrics") or {}).get("image_safety_gate") or {}).get(
+            "processing_mode"
+        ))
+        or "generate_replacements"
+    )
+    select_existing = processing_mode == "select_existing"
     row_fields = (
         [
             field
@@ -44,7 +51,7 @@ def render_html(
     )
     refill_button = (
         '<button id="export-refill">一键应用并导出回填表</button>'
-        if formal_payload else ''
+        if formal_payload and formal_count else ''
     )
     cards = []
     for row in rows:
@@ -83,6 +90,15 @@ def render_html(
                 f'<small>处理动作：{html.escape(action or "keep")}</small>'
                 f'<small>检出文字：{html.escape(detected_text_label)}</small>'
             )
+            if select_existing and role_key in {'main', 'attachment'}:
+                eligibility = (
+                    '可作为主图' if image.get('main_eligible')
+                    else '不可作为主图'
+                )
+                text_review += (
+                    '<small class="main-eligibility">主图资格：'
+                    f'{eligibility}</small>'
+                )
             if image.get('accepted_without_machine_review'):
                 text_review += (
                     '<small class="human-review-note">'
@@ -132,10 +148,20 @@ def render_html(
                     '</div>'
                 )
             action_buttons = (
-                '<button data-action="regenerate_image">'
-                '重新生成主图/变种图</button>'
-                '<button data-action="delete_image">删除单张附图</button>'
-                '<button data-action="false_positive">标记误判</button>'
+                (
+                    '<button data-action="recheck_main_candidate">'
+                    '重新审查主图资格</button>'
+                    if role_key in {'main', 'attachment'} else ''
+                )
+                + '<button data-action="delete_image">删除单张附图</button>'
+                + '<button data-action="false_positive">标记误判</button>'
+                if select_existing
+                else (
+                    '<button data-action="regenerate_image">'
+                    '重新生成主图/变种图</button>'
+                    '<button data-action="delete_image">删除单张附图</button>'
+                    '<button data-action="false_positive">标记误判</button>'
+                )
             )
             sortable = (
                 role_key in {'main', 'attachment'}
@@ -156,6 +182,7 @@ def render_html(
                 f'<figure class="image status-{html.escape(status)}" '
                 f'data-status="{html.escape(status)}" '
                 f'data-role="{html.escape(role_key)}" '
+                f'data-main-eligible="{str(bool(image.get("main_eligible"))).lower()}" '
                 f'data-image-url="{html.escape(str(image["url"]), quote=True)}"'
                 f'{sortable_attrs} '
                 f'data-decision-key="{decision_key}">'
@@ -346,6 +373,8 @@ h2{{margin:10px 0 16px;font-size:21px}} h3{{margin:14px 0 6px;font-size:15px;col
 .drag-handle:active{{cursor:grabbing}}
 .image-order-help{{font-weight:400;color:#68757e;margin-left:8px}}
 .image-order-label{{display:block;min-height:22px;color:#0f6b4b;font-weight:700}}
+.main-eligibility{{font-weight:700!important;color:#17613d!important}}
+.image[data-main-eligible="false"] .main-eligibility{{color:#a22!important}}
 .image[data-role="attachment"] .image-actions button[data-action="regenerate_image"]{{display:none}}
 .image:not([data-role="attachment"]) .image-actions button[data-action="delete_image"]{{display:none}}
 .image.status-risk{{border-color:#d84b3e;box-shadow:0 0 0 2px #d84b3e22}}
@@ -386,6 +415,7 @@ const storageKey={json.dumps("amazon-review-decisions:" + run_id, ensure_ascii=F
 let decisions=JSON.parse(localStorage.getItem(storageKey)||'{{}}');
 const embeddedFormalPayload={_script_json(formal_payload)};
 const embeddedRowFields={_script_json(row_fields)};
+const selectExistingMode={str(select_existing).lower()};
 function persistDecisions(){{
  localStorage.setItem(storageKey,JSON.stringify(decisions));
 }}
@@ -407,6 +437,7 @@ function updateProductImageRoles(productCard){{
      const current=decisions[oldKey];
      delete decisions[oldKey];
      const compatible=current.action==='false_positive'||
+       current.action==='recheck_main_candidate'||
        (role==='main'&&current.action==='regenerate_image')||
        (role==='attachment'&&current.action==='delete_image');
      if(compatible){{current.role=role;decisions[newKey]=current;}}
@@ -434,22 +465,31 @@ function recordImageOrder(productCard){{
  persistDecisions();
  refreshDecisions();
 }}
+function placeProductImages(productCard,order){{
+ const container=productCard.querySelector('.images');
+ const boundary=container?.querySelector('.image[data-role="variant"]')||null;
+ const available=productImageCards(productCard);
+ const used=new Set();
+ order.forEach(url=>{{
+   const card=available.find(item=>!used.has(item)&&item.dataset.imageUrl===url);
+   if(card){{used.add(card);container.insertBefore(card,boundary);}}
+ }});
+ available.filter(card=>!used.has(card)).forEach(card=>container.insertBefore(card,boundary));
+ updateProductImageRoles(productCard);
+}}
 function restoreImageOrders(){{
  document.querySelectorAll('.product').forEach(productCard=>{{
    const decision=decisions[productCard.dataset.product+'|product_images'];
    if(!decision||!Array.isArray(decision.image_urls)){{
      updateProductImageRoles(productCard);return;
    }}
-   const container=productCard.querySelector('.images');
-   const boundary=container?.querySelector('.image[data-role="variant"]')||null;
-   const available=productImageCards(productCard);
-   const used=new Set();
-   decision.image_urls.forEach(url=>{{
-     const card=available.find(item=>!used.has(item)&&item.dataset.imageUrl===url);
-     if(card){{used.add(card);container.insertBefore(card,boundary);}}
-   }});
-   available.filter(card=>!used.has(card)).forEach(card=>container.insertBefore(card,boundary));
-   updateProductImageRoles(productCard);
+   const initialOrder=productImageCards(productCard).map(card=>card.dataset.imageUrl);
+   placeProductImages(productCard,decision.image_urls);
+   const first=productImageCards(productCard)[0];
+   if(selectExistingMode&&first?.dataset.mainEligible!=='true'){{
+     delete decisions[productCard.dataset.product+'|product_images'];
+     placeProductImages(productCard,initialOrder);
+   }}
  }});
  persistDecisions();
 }}
@@ -482,12 +522,14 @@ document.querySelectorAll('.product-actions,.image-actions').forEach(container=>
  }}));
 }});
 let draggingCard=null;
+let dragStartOrder=[];
 document.querySelectorAll('.image[data-sortable="product"]').forEach(card=>{{
  card.addEventListener('dragstart',event=>{{
    if(event.target.closest('figcaption,.image-actions,button,a,input')){{
      event.preventDefault();return;
    }}
    draggingCard=card;
+   dragStartOrder=productImageCards(card.closest('.product')).map(item=>item.dataset.imageUrl);
    draggingCard.classList.add('dragging');
    event.dataTransfer.effectAllowed='move';
    event.dataTransfer.setData('text/plain',draggingCard.dataset.imageUrl||'image');
@@ -497,6 +539,12 @@ document.querySelectorAll('.image[data-sortable="product"]').forEach(card=>{{
    const productCard=draggingCard.closest('.product');
    draggingCard.classList.remove('dragging');
    draggingCard=null;
+   const first=productImageCards(productCard)[0];
+   if(selectExistingMode&&first?.dataset.mainEligible!=='true'){{
+     placeProductImages(productCard,dragStartOrder);
+     alert('这张图片没有 safe + text_free 主图资格，不能放到第一位。可先点击“重新审查主图资格”。');
+     return;
+   }}
    recordImageOrder(productCard);
  }});
 }});
@@ -560,6 +608,10 @@ function buildReviewedRefill(){{
  if(regenerations.length){{
    throw new Error('存在 '+regenerations.length+' 条重新生成图片决定。网页不能调用生图 API，请先导出审核决定并使用 02_应用审核决定.bat。');
  }}
+ const rechecks=items.filter(item=>item.action==='recheck_main_candidate');
+ if(rechecks.length){{
+   throw new Error('存在 '+rechecks.length+' 条重新审查主图资格决定。请先导出审核决定并使用 02_应用审核决定.bat。');
+ }}
  const output=JSON.parse(JSON.stringify(embeddedFormalPayload));
  const deleteIds=new Set(items.filter(item=>item.action==='delete_product').map(item=>String(item.product_id)));
  const rowIndex=productId=>output['商品id'].map(String).indexOf(String(productId));
@@ -570,6 +622,13 @@ function buildReviewedRefill(){{
    const current=output['产品图片链接'][index];
    if(!sameImageMultiset(current,item.image_urls)){{
      throw new Error('商品 '+item.product_id+' 的图片排序不完整，拒绝导出');
+   }}
+   if(selectExistingMode){{
+     const card=document.querySelector('.product[data-product="'+CSS.escape(String(item.product_id))+'"]');
+     const eligible=new Set(productImageCards(card).filter(image=>image.dataset.mainEligible==='true').map(image=>image.dataset.imageUrl));
+     if(!eligible.has(String(item.image_urls[0]))){{
+       throw new Error('商品 '+item.product_id+' 的第 1 张图片没有主图资格，拒绝导出');
+     }}
    }}
    output['产品图片链接'][index]=Array.from(item.image_urls);
  }});

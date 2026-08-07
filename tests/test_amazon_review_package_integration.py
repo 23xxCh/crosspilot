@@ -15,7 +15,7 @@ def test_formal_image_acceptance_rejects_missing_safe_record() -> None:
         "_image_assessments": [],
     }]
 
-    with pytest.raises(ValueError, match="未获 safe 记录"):
+    with pytest.raises(ValueError, match="未获 safe"):
         _assert_formal_images_are_safe(
             rows,
             {"image_safety_gate": {"reviewed": 1}},
@@ -33,6 +33,7 @@ def test_formal_image_acceptance_allows_only_safe_records() -> None:
                 "url": "https://img/main.jpg",
                 "role": "main",
                 "assessment": {"status": "safe"},
+                "text_assessment": {"status": "safe"},
             },
             {
                 "url": "https://img/extra.jpg",
@@ -53,7 +54,9 @@ def test_formal_image_acceptance_allows_only_safe_records() -> None:
     )
 
 
-def test_formal_image_acceptance_allows_main_without_text_gate() -> None:
+def test_select_existing_rejects_main_without_text_gate(
+    monkeypatch,
+) -> None:
     rows = [{
         "id": "p1",
         "main_img": "https://img/main.jpg",
@@ -65,6 +68,41 @@ def test_formal_image_acceptance_allows_main_without_text_gate() -> None:
             "assessment": {"status": "safe"},
         }],
     }]
+
+    monkeypatch.setattr(
+        "amazon_processor.delivery.get",
+        lambda key, default="": (
+            "select_existing" if key == "IMAGE_PROCESSING_MODE" else default
+        ),
+    )
+    with pytest.raises(ValueError, match="text_free"):
+        _assert_formal_images_are_safe(
+            rows,
+            {"image_safety_gate": {"reviewed": 1}},
+        )
+
+
+def test_generate_replacements_keeps_legacy_text_gate_behavior(
+    monkeypatch,
+) -> None:
+    rows = [{
+        "id": "p1",
+        "main_img": "https://img/main.jpg",
+        "extra_imgs": [],
+        "var_imgs": [],
+        "_image_assessments": [{
+            "url": "https://img/main.jpg",
+            "role": "main",
+            "assessment": {"status": "safe"},
+        }],
+    }]
+    monkeypatch.setattr(
+        "amazon_processor.delivery.get",
+        lambda key, default="": (
+            "generate_replacements"
+            if key == "IMAGE_PROCESSING_MODE" else default
+        ),
+    )
 
     _assert_formal_images_are_safe(
         rows,

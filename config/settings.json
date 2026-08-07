@@ -89,6 +89,7 @@
     }
   },
   "runtime": {
+    "image_processing_mode": "select_existing",
     "text_concurrency": 100,
     "review_concurrency": 15,
     "review_batch_size": 3,

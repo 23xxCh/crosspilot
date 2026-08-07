@@ -105,6 +105,8 @@ def test_delivery_publishes_one_fixed_artifact_set(
 
     result = delivery.deliver(context, problem_product_ids=[])
 
+    assert result.published is True
+    assert result.pending_product_ids == ()
     assert result.output_path == output_root / "最新" / delivery.REFILL_NAME
     payload = json.loads(result.output_path.read_text(encoding="utf-8"))
     assert tuple(payload) == (
@@ -125,12 +127,103 @@ def test_delivery_publishes_one_fixed_artifact_set(
     )
     assert result.review_path.is_file()
     assert result.review_data_path.is_file()
+    status = json.loads(
+        (result.review_path.parent / delivery.STATUS_NAME).read_text(
+            encoding="utf-8",
+        )
+    )
+    assert status["published"] is True
+    assert status["status"] == "published"
+    assert status["counts"] == {
+        "input_rows": 1,
+        "processed_rows": 1,
+        "released_rows": 1,
+        "pending_rows": 0,
+        "problem_product_ids": 0,
+    }
     review_data = json.loads(result.review_data_path.read_text(encoding="utf-8"))
     run_metrics = review_data.get("summary", {}).get("run_metrics", {})
     assert run_metrics.get("marketplaces", {}).get("completed_by_site") == {
         "US": 1,
     }
     assert run_metrics.get("image_deduplication", {}).get("unique_urls") == 1
+
+
+def test_delivery_writes_pending_review_without_overwriting_latest(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    output_root = tmp_path / "02_处理结果"
+    latest = output_root / "最新"
+    latest.mkdir(parents=True)
+    formal = latest / delivery.REFILL_NAME
+    formal.write_text("old-formal", encoding="utf-8")
+    monkeypatch.setattr(delivery, "OUTPUT_ROOT", output_root)
+    monkeypatch.setattr(delivery, "RUNTIME_ROOT", tmp_path / ".runtime")
+    monkeypatch.setattr(delivery, "LATEST_DIR", latest)
+    monkeypatch.setattr(delivery, "ARCHIVE_DIR", output_root / "归档")
+
+    def fake_review(input_path, output_dir, **kwargs):
+        output = Path(output_dir)
+        (output / delivery.REVIEW_NAME).write_text("pending", encoding="utf-8")
+        (output / delivery.REVIEW_DATA_NAME).write_text("{}", encoding="utf-8")
+        assert [item["product_id"] for item in kwargs["quarantine_products"]] == ["p1"]
+        return {"products": 1}
+
+    monkeypatch.setattr(delivery, "export_review", fake_review)
+    context = _context(tmp_path)
+    context.data = [{
+        "id": "p1",
+        "site": "US",
+        "title": "Generic Product",
+        "subtitle": "Useful material, simple installation",
+        "desc": "Useful product description",
+        "main_img": "https://img/main.jpg",
+        "extra_imgs": [],
+        "var_imgs": [],
+        "bullets": [f"Useful detail {index}" for index in range(5)],
+        "keywords": "product, item, part, material, installation, use, accessory, hardware, kit, universal",
+        "_main_selection_pending": True,
+        "_image_assessments": [{
+            "role": "main",
+            "url": "https://img/main.jpg",
+            "source": "source",
+            "assessment": {"status": "risk"},
+            "main_eligible": False,
+        }],
+    }]
+    context.runtime_metrics["image_safety_gate"] = {
+        "processing_mode": "select_existing",
+        "pending_products": 1,
+    }
+    context.runtime_metrics["pending_main_products"] = [{
+        "product_id": "p1",
+        "site": "US",
+        "title": "Generic Product",
+        "reason": "missing_clean_main",
+        "images": context.data[0]["_image_assessments"],
+    }]
+
+    result = delivery.deliver(context, problem_product_ids=[])
+
+    assert result.published is False
+    assert result.output_path is None
+    assert result.pending_product_ids == ("p1",)
+    assert result.review_path.is_file()
+    assert result.review_data_path.is_file()
+    assert result.review_path.parent.parent == output_root / "待人工审核"
+    assert (result.review_path.parent / "待定商品.json").is_file()
+    status = json.loads(
+        (result.review_path.parent / delivery.STATUS_NAME).read_text(
+            encoding="utf-8",
+        )
+    )
+    assert status["published"] is False
+    assert status["status"] == "pending_review"
+    assert status["counts"]["released_rows"] == 0
+    assert status["counts"]["pending_rows"] == 1
+    assert status["pending_product_ids"] == ["p1"]
+    assert formal.read_text(encoding="utf-8") == "old-formal"
 
 
 def test_publish_replaces_files_when_latest_directory_is_open(

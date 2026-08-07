@@ -9,6 +9,7 @@ from amazon_processor.review.translation import (
     _source_row,
     _valid_translation,
 )
+from amazon_processor.review.html import render_html
 
 
 def _payload() -> dict:
@@ -55,7 +56,7 @@ def test_export_review_composes_package_and_quarantine(
     monkeypatch.setattr(
         exporter,
         "translate_payload",
-        lambda *_args, **_kwargs: ([translation], [], {"calls": 1}),
+        lambda *_args, **_kwargs: ([translation], [1], {"calls": 1}),
     )
 
     def fake_download(
@@ -145,6 +146,17 @@ def test_export_review_composes_package_and_quarantine(
     assert summary["products"] == 2
     assert summary["image_occurrences"] == 3
     assert summary["provider_metrics"] == {"calls": 1}
+    assert summary["provider_metrics_by_stage"]["review_translation"] == {
+        "calls": 1,
+    }
+    assert summary["translation_failures"] == [{
+        "row": 1,
+        "product_id": "released-1",
+        "site": "DE",
+        "fields": ["title", "subtitle", "description", "bullets", "keywords"],
+        "status": "fallback_source_copy",
+        "message": "中文终审翻译未通过校验，终审包暂使用站点原文",
+    }]
     for filename in ("审核数据.json", "终审包.html"):
         assert (output_dir / filename).is_file()
     review_data = json.loads(
@@ -177,6 +189,70 @@ def test_export_review_composes_package_and_quarantine(
     assert "function buildReviewedRefill()" in html
     assert "跨境电商自动化回填表.json" in html
     assert '"商品id":["released-1"]' in html
+
+
+def test_select_existing_review_hides_generation_and_marks_main_eligibility() -> None:
+    rows = [{
+        "row": 1,
+        "product_id": "released-1",
+        "site": "US",
+        "title": "产品",
+        "subtitle": "亮点",
+        "description": "描述",
+        "bullets": ["一", "二", "三", "四", "五"],
+        "keywords": "关键词",
+        "localized": {
+            "title": "Product",
+            "subtitle": "Highlight",
+            "description": "Description",
+            "bullets": ["1", "2", "3", "4", "5"],
+            "keywords": "keywords",
+        },
+        "images": [
+            {
+                "role": "主图",
+                "role_key": "main",
+                "url": "https://img/main.jpg",
+                "download_ok": False,
+                "assessment": {"status": "safe"},
+                "text_assessment": {"status": "safe"},
+                "main_eligible": True,
+            },
+            {
+                "role": "附图 1",
+                "role_key": "attachment",
+                "url": "https://img/text.jpg",
+                "download_ok": False,
+                "assessment": {"status": "safe"},
+                "text_assessment": {"status": "risk"},
+                "main_eligible": False,
+            },
+        ],
+        "quarantined": False,
+        "quarantine_reasons": [],
+    }]
+    summary = {
+        "run_id": "select-test",
+        "products": 1,
+        "image_occurrences": 2,
+        "downloaded_unique_images": 0,
+        "unique_images": 2,
+        "quarantined_products": 0,
+        "run_metrics": {
+            "image_safety_gate": {
+                "processing_mode": "select_existing",
+            },
+        },
+    }
+
+    page = render_html(rows, summary, formal_payload=_payload())
+
+    assert "重新生成主图/变种图" not in page
+    assert "重新审查主图资格" in page
+    assert "主图资格：可作为主图" in page
+    assert "主图资格：不可作为主图" in page
+    assert 'data-main-eligible="true"' in page
+    assert "这张图片没有 safe + text_free 主图资格" in page
 
 
 def test_review_translation_preserves_description_paragraphs() -> None:

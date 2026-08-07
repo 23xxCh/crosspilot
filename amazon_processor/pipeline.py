@@ -35,27 +35,6 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _partition_rows_without_attachments(
-    rows: list[dict],
-) -> tuple[list[dict], list[dict]]:
-    """Remove products that have no usable attachment after image review."""
-    retained = []
-    rejected = []
-    for row in rows:
-        if row.get("extra_imgs"):
-            retained.append(row)
-            continue
-        rejected.append({
-            "product_id": str(row.get("id") or ""),
-            "title": str(row.get("title") or ""),
-            "code": "missing_safe_attachments",
-            "message": (
-                "风险附图删除后没有可用附图，商品已从正式回填表删除"
-            ),
-        })
-    return retained, rejected
-
-
 def process_json(input_path: str | Path) -> RunResult:
     """Process one Amazon JSON collection table and publish formal artifacts."""
     with processing_lock():
@@ -171,20 +150,7 @@ def _process_json_unlocked(input_path: str | Path) -> RunResult:
     context.runtime_metrics["image_deduplication"][
         "unique_generated_images"
     ] = len(generated_urls)
-    context.data, attachment_rejected = (
-        _partition_rows_without_attachments(context.data)
-    )
-    context.runtime_metrics["attachment_rejected_products"] = (
-        attachment_rejected
-    )
-    problem_product_ids = list(dict.fromkeys([
-        *problem_product_ids,
-        *(
-            str(item.get("product_id") or "")
-            for item in attachment_rejected
-            if str(item.get("product_id") or "")
-        ),
-    ]))
+    context.runtime_metrics["attachment_rejected_products"] = []
     text_cache = LocalizationCache(
         RUNTIME_ROOT
         / "cache"

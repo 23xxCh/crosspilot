@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,7 @@ ALLOWED_ACTIONS = {
     "delete_product",
     "delete_image",
     "regenerate_image",
+    "recheck_main_candidate",
     "reorder_images",
     "false_positive",
 }
@@ -177,7 +179,18 @@ def _validate_decisions(value: dict) -> list[dict]:
             raise ValueError(
                 "regenerate_image 只能用于主图或变种图"
             )
-        if action in {"delete_image", "regenerate_image"} and not image_url:
+        if action == "recheck_main_candidate" and role not in {
+            "main",
+            "attachment",
+        }:
+            raise ValueError(
+                "recheck_main_candidate 只能用于主图或附图候选"
+            )
+        if action in {
+            "delete_image",
+            "regenerate_image",
+            "recheck_main_candidate",
+        } and not image_url:
             raise ValueError(
                 f"第 {index} 条图片决定缺少 image_url"
             )
@@ -208,6 +221,33 @@ def _validate_decisions(value: dict) -> list[dict]:
             "recorded_at": str(item.get("recorded_at") or ""),
         })
     return normalized
+
+
+def _select_existing_eligibility(
+    package_dir: Path | None,
+) -> dict[str, set[str]] | None:
+    if package_dir is None:
+        return None
+    data_path = package_dir / "审核数据.json"
+    if not data_path.is_file():
+        return None
+    review_data = _load_json(data_path)
+    mode = str(
+        ((((review_data.get("summary") or {}).get("run_metrics") or {}).get(
+            "image_safety_gate"
+        ) or {}).get("processing_mode"))
+        or ""
+    )
+    if mode != "select_existing":
+        return None
+    return {
+        str(product.get("product_id") or ""): {
+            str(image.get("url") or "")
+            for image in product.get("images") or []
+            if image.get("main_eligible") is True
+        }
+        for product in review_data.get("products") or []
+    }
 
 
 def _update_review_package(
@@ -398,6 +438,7 @@ def apply_decisions(
         str(value) for value in payload["商品id"]
     }
     reorder_by_product: dict[str, list[str]] = {}
+    main_eligibility = _select_existing_eligibility(package_dir)
     for item in decisions:
         if item["action"] != "reorder_images":
             continue
@@ -453,6 +494,15 @@ def apply_decisions(
                     f"商品 {item['product_id']} 的图片排序必须完整包含"
                     "现有主图和全部附图，不能新增、遗漏或重复图片"
                 )
+            if (
+                main_eligibility is not None
+                and item["image_urls"][0]
+                not in main_eligibility.get(item["product_id"], set())
+            ):
+                raise ValueError(
+                    f"商品 {item['product_id']} 的第 1 张图片没有 "
+                    "safe + text_free 主图资格"
+                )
         elif action == "delete_image":
             images = reorder_by_product.get(
                 item["product_id"],
@@ -487,6 +537,11 @@ def apply_decisions(
                     "generated_url": generated,
                     "assessment": assessment,
                 })
+        elif action == "recheck_main_candidate":
+            raise ValueError(
+                "重新审查主图资格必须使用最新任务入口应用，"
+                "不能直接修改正式回填表"
+            )
         elif action == "false_positive":
             false_positive_overrides.append(item)
         planned.append({**item, "status": "validated"})
@@ -596,6 +651,51 @@ def apply_decisions(
 def apply_latest_decisions(decisions_json: str | Path) -> dict:
     """Apply an exported decision file to the single expanded latest run."""
     from ..delivery import LATEST_DIR, REFILL_NAME
+
+    decision_path = Path(decisions_json).resolve()
+    envelope = _load_json(decision_path)
+    normalized = _validate_decisions(envelope)
+    rechecks = [
+        item for item in normalized
+        if item["action"] == "recheck_main_candidate"
+    ]
+    if rechecks:
+        if len(rechecks) != len(normalized):
+            raise ValueError(
+                "重新审查主图资格不能与删除、排序或生图决定混合应用"
+            )
+        source = Path(str(envelope.get("source") or "")).expanduser().resolve()
+        if not source.is_file():
+            raise FileNotFoundError(
+                f"审核决定对应的原采集表不存在: {source}"
+            )
+        digest = hashlib.sha256()
+        with source.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        from ..pipeline import RUNTIME_ROOT, _process_json_unlocked
+
+        cache_path = (
+            RUNTIME_ROOT / "cache" / "pipeline" / f"{digest.hexdigest()}.json"
+        )
+        if cache_path.is_file():
+            cache = _load_json(cache_path)
+            for item in rechecks:
+                url = item["image_url"]
+                (cache.get("risk_assessments") or {}).pop(url, None)
+                (cache.get("main_text_assessments") or {}).pop(url, None)
+            _atomic_json(cache_path, cache)
+        result = _process_json_unlocked(source)
+        return {
+            "version": 1,
+            "status": "rechecked",
+            "decisions": rechecks,
+            "source": str(source),
+            "published": result.published,
+            "output_path": str(result.output_path or ""),
+            "review_path": str(result.review_path),
+            "pending_product_ids": list(result.pending_product_ids),
+        }
 
     return apply_decisions(
         LATEST_DIR / REFILL_NAME,

@@ -238,7 +238,7 @@ def test_pipeline_rejects_missing_product_descriptions_before_api(
     ]
 
 
-def test_pipeline_marks_product_without_attachments_as_problem(
+def test_pipeline_keeps_product_with_only_main_image(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -311,12 +311,7 @@ def test_pipeline_marks_product_without_attachments_as_problem(
     result = pipeline.process_json(source)
 
     assert result.status == "delivered"
-    assert seen["text_ids"] == ["kept"]
-    assert seen["delivered_ids"] == ["kept"]
-    assert seen["problem_ids"] == ["no-attachment"]
-    assert seen["attachment_rejected"] == [{
-        "product_id": "no-attachment",
-        "title": "Risk Attachment Product",
-        "code": "missing_safe_attachments",
-        "message": "风险附图删除后没有可用附图，商品已从正式回填表删除",
-    }]
+    assert seen["text_ids"] == ["kept", "no-attachment"]
+    assert seen["delivered_ids"] == ["kept", "no-attachment"]
+    assert seen["problem_ids"] == []
+    assert seen["attachment_rejected"] == []

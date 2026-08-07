@@ -13,6 +13,8 @@ from amazon_processor.text.locale import (
     localization_violations,
     market_prompt_values,
     normalize_localized_title,
+    sanitize_localized_description,
+    sanitize_localized_subtitle,
 )
 from amazon_processor.text.localization import (
     LocalizationCache,
@@ -139,6 +141,44 @@ def test_language_validation_rejects_english_field_hidden_by_localized_copy() ->
     assert "language_description_line_3:en->fr" in violations
 
 
+def test_language_validation_allows_localized_compatibility_spec_lines() -> None:
+    cases = [
+        (
+            "DE",
+            "Kompatibilität: 2007-2018 Journey, Patriot; auch kompatibel mit "
+            "2007-2011 Nitro, 2008-2012 Liberty, 2007-2017 Compass "
+            "(OE: 5183172AC, 5183172AA, 5183172AB)",
+        ),
+        (
+            "MX",
+            "Compatibilidad: Sonata 2024 2025 (SEL, SEL Convenience, "
+            "SEL Hybrid, N Line, Limited, Limited Hybrid)",
+        ),
+    ]
+
+    for site, compatibility_line in cases:
+        row = _localized_row(site)
+        row["desc"] = f"{row['desc']}\n{compatibility_line}"
+
+        assert not any(
+            violation.startswith("language_description_line_")
+            for violation in localization_violations(row)
+        )
+
+
+def test_short_field_language_warning_does_not_block_release() -> None:
+    row = _localized_row("FR")
+    row["title"] = "Generic Start Stop Push Button Cover en Carbone pour Voiture"
+    row["subtitle"] = "Alliage métallique, diamètre intérieur 3 cm"
+
+    violations = localization_violations(row)
+    assert any(item.startswith("language_title:") for item in violations)
+    assert not any(
+        item.startswith(("language_title:", "language_subtitle:", "language_keywords:"))
+        for item in _all_violations(row)
+    )
+
+
 def test_release_validation_rejects_long_keywords_special_subtitle_and_oem() -> None:
     row = _localized_row("US")
     row["subtitle"] = "Universal 4-12 inch fit"
@@ -229,6 +269,26 @@ def test_fact_validation_uses_selected_product_block_and_quantity_semantics() ->
 
     assert "missing_fact:3cm" not in violations
     assert "missing_fact:1pc" not in violations
+
+
+def test_fact_validation_matches_english_brand_to_chinese_source_alias() -> None:
+    row = _localized_row("US")
+    row["_source_title"] = "适用于 2023-2025 本田 CRV 中控台扶手盒"
+    row["_source_desc"] = "Center console armrest box for Honda CRV."
+    row["title"] = "Generic Center Console Armrest Box for Honda CRV"
+
+    assert "unexpected_brand:honda" not in _fact_violations(row)
+
+    row["_source_title"] = "适用于雪佛兰 Equinox 中控台扶手盒"
+    row["title"] = "Generic Center Console Armrest Box for Chevrolet Equinox"
+    assert "unexpected_brand:chevrolet" not in _fact_violations(row)
+
+
+def test_localized_non_title_fields_remove_brand_and_oem_claims() -> None:
+    value = "Originalteile für Honda CRV.\nMaterial: ABS"
+    assert "Originalteile" not in sanitize_localized_description(value)
+    assert "Honda" not in sanitize_localized_description(value)
+    assert sanitize_localized_subtitle("OEM Honda Zubehör", "DE") == "Zubehör"
 
 
 def test_repair_postprocessing_enforces_limits_counts_and_source_facts() -> None:

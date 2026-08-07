@@ -16,7 +16,7 @@ from .quality import (
 )
 from .review.exporter import export_review
 from .runtime import RunContext, RunResult
-from .schema import write_output_json
+from .schema import AMAZON_JSON_OUTPUT_FIELDS, write_output_json
 from .config.env import get
 
 
@@ -28,6 +28,125 @@ ARCHIVE_DIR = OUTPUT_ROOT / "归档"
 REFILL_NAME = "跨境电商自动化回填表.json"
 REVIEW_NAME = "终审包.html"
 REVIEW_DATA_NAME = "审核数据.json"
+STATUS_NAME = "运行状态.json"
+
+
+def _provider_metrics_from_run(run_metrics: dict | None) -> dict:
+    """Normalize pipeline metrics into the public provider metric shape."""
+    values = run_metrics if isinstance(run_metrics, dict) else {}
+    calls = int(values.get("api_calls") or values.get("calls") or 0)
+    errors = int(values.get("api_errors") or values.get("errors") or 0)
+    return {
+        "api_calls": calls,
+        "api_errors": errors,
+        "api_success_rate": (
+            round(1 - errors / calls, 3) if calls else None
+        ),
+        "http_attempts": int(values.get("http_attempts") or 0),
+        "http_errors": int(values.get("http_errors") or 0),
+        "http_retries": int(values.get("http_retries") or 0),
+        "circuit_open": int(values.get("circuit_open") or 0),
+        "fallback_attempts": int(values.get("fallback_attempts") or 0),
+        "fallback_successes": int(values.get("fallback_successes") or 0),
+        "fallback_failures": int(values.get("fallback_failures") or 0),
+        "http_status": dict(values.get("http_status") or {}),
+        "by_operation": dict(values.get("api_by_operation") or {}),
+    }
+
+
+def _combine_provider_metrics(
+    pipeline_metrics: dict | None,
+    review_metrics: dict | None,
+) -> dict:
+    """Combine pipeline and review-translation metrics without hiding stages."""
+    stages = {
+        "pipeline": _provider_metrics_from_run(pipeline_metrics),
+        "review_translation": _provider_metrics_from_run(review_metrics),
+    }
+    totals = {
+        key: sum(item[key] for item in stages.values())
+        for key in (
+            "api_calls",
+            "api_errors",
+            "http_attempts",
+            "http_errors",
+            "http_retries",
+            "circuit_open",
+            "fallback_attempts",
+            "fallback_successes",
+            "fallback_failures",
+        )
+    }
+    status: dict[str, int] = {}
+    for item in stages.values():
+        for code, count in item["http_status"].items():
+            status[str(code)] = status.get(str(code), 0) + int(count or 0)
+    calls = totals["api_calls"]
+    return {
+        **totals,
+        "api_success_rate": (
+            round(1 - totals["api_errors"] / calls, 3) if calls else None
+        ),
+        "http_status": status,
+        "by_stage": stages,
+    }
+
+
+def _write_status(
+    output_dir: Path,
+    *,
+    context: RunContext,
+    published: bool,
+    released_products: int,
+    pending_product_ids: list[str] | tuple[str, ...],
+    problem_product_ids: list[str],
+    run_metrics: dict,
+) -> None:
+    """Write one machine-readable status manifest next to every review package."""
+    source = dict(context.runtime_metrics.get("source") or {})
+    input_by_site = (
+        context.runtime_metrics.get("marketplaces", {}).get("input_by_site")
+        or {}
+    )
+    payload = {
+        "version": 1,
+        "run_id": context.request_id,
+        "status": "published" if published else "pending_review",
+        "published": bool(published),
+        "source": source,
+        "counts": {
+            "input_rows": sum(int(value or 0) for value in input_by_site.values()),
+            "processed_rows": len(context.data),
+            "released_rows": int(released_products),
+            "pending_rows": len(tuple(pending_product_ids)),
+            "problem_product_ids": len(tuple(problem_product_ids)),
+        },
+        "pending_product_ids": list(pending_product_ids),
+        "problem_product_ids": list(dict.fromkeys(
+            str(value) for value in problem_product_ids if str(value)
+        )),
+        "output_path": (
+            str(LATEST_DIR / REFILL_NAME) if published else None
+        ),
+        "review_path": str(output_dir / REVIEW_NAME),
+        "review_data_path": str(output_dir / REVIEW_DATA_NAME),
+        "image_safety": dict(run_metrics.get("image_safety_gate") or {}),
+        "provider_metrics": _combine_provider_metrics(
+            run_metrics,
+            run_metrics.get("review_translation_provider_metrics"),
+        ),
+        "quality": dict(run_metrics.get("quality") or {}),
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    temporary = output_dir / f".{STATUS_NAME}.{os.getpid()}.tmp"
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(temporary, output_dir / STATUS_NAME)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _assert_formal_images_are_safe(
@@ -37,6 +156,13 @@ def _assert_formal_images_are_safe(
     """Refuse delivery when any retained image lacks a current safe record."""
     if not runtime_metrics.get("image_safety_gate"):
         return
+    processing_mode = str(
+        (runtime_metrics.get("image_safety_gate") or {}).get(
+            "processing_mode"
+        )
+        or get("IMAGE_PROCESSING_MODE", "select_existing")
+    ).strip().lower()
+    select_existing = processing_mode == "select_existing"
     human_review_generated = (
         get("GENERATED_IMAGE_REVIEW_MODE", "strict").strip().lower()
         == "human_review"
@@ -68,7 +194,10 @@ def _assert_formal_images_are_safe(
                 and record.get("accepted_without_machine_review") is True
             ):
                 continue
-            if record.get("image_action") == "keep_review":
+            if (
+                not select_existing
+                and record.get("image_action") == "keep_review"
+            ):
                 continue
             assessment = record.get("assessment") or {}
             if assessment.get("status") != "safe":
@@ -80,6 +209,20 @@ def _assert_formal_images_are_safe(
                     }
                 )
                 continue
+            if select_existing and role == "main":
+                text_assessment = record.get("text_assessment") or {}
+                if text_assessment.get("status") != "safe":
+                    violations.append({
+                        "product_id": str(row.get("id") or ""),
+                        "role": role,
+                        "status": "missing_text_free_safe",
+                    })
+                if record.get("source") == "generated":
+                    violations.append({
+                        "product_id": str(row.get("id") or ""),
+                        "role": role,
+                        "status": "generated_not_allowed",
+                    })
     if violations:
         sample = ", ".join(
             f"{item['product_id']}:{item['role']}={item['status']}"
@@ -87,8 +230,190 @@ def _assert_formal_images_are_safe(
         )
         raise ValueError(
             f"图片安全门验收失败：正式表仍有 {len(violations)} 张"
-            f"未获 safe 记录的图片（{sample}）"
+            f"未获 safe / text_free 记录的图片（{sample}）"
         )
+
+
+def _run_metrics(
+    context: RunContext,
+    validation: dict,
+    problem_product_ids: list[str],
+) -> dict:
+    if hasattr(context.provider, "metrics_snapshot"):
+        context.metrics.set_provider_metrics(
+            context.provider.metrics_snapshot()
+        )
+    context.metrics.set_concurrency_metrics(
+        context.runtime_metrics.get("concurrency")
+    )
+    context.metrics.set_image_remediation_metrics(
+        context.runtime_metrics.get("image_remediation")
+    )
+    context.metrics.set_quality_metrics(validation)
+    run_metrics = context.metrics.to_dict()
+    run_metrics["image_safety_gate"] = dict(
+        context.runtime_metrics.get("image_safety_gate") or {}
+    )
+    run_metrics["description_rejected_products"] = list(
+        context.runtime_metrics.get("description_rejected_products") or []
+    )
+    run_metrics["problem_product_ids"] = list(dict.fromkeys(
+        str(product_id)
+        for product_id in problem_product_ids
+        if str(product_id)
+    ))
+    for key in (
+        "source",
+        "marketplaces",
+        "image_deduplication",
+        "localization",
+        "attachment_rejected_products",
+        "pending_main_products",
+    ):
+        value = context.runtime_metrics.get(key)
+        if value is not None:
+            run_metrics[key] = value
+    return run_metrics
+
+
+def _deliver_pending(
+    context: RunContext,
+    *,
+    problem_product_ids: list[str],
+) -> RunResult:
+    pending_ids = tuple(dict.fromkeys(
+        str(row.get("id") or "")
+        for row in context.data
+        if row.get("_main_selection_pending") and str(row.get("id") or "")
+    ))
+    pending_set = set(pending_ids)
+    safe_rows = [
+        row for row in context.data
+        if str(row.get("id") or "") not in pending_set
+    ]
+    pending_by_id = {
+        str(item.get("product_id") or ""): dict(item)
+        for item in context.runtime_metrics.get("pending_main_products") or []
+    }
+    pending_products = []
+    for row in context.data:
+        product_id = str(row.get("id") or "")
+        if product_id not in pending_set:
+            continue
+        item = pending_by_id.get(product_id, {})
+        item.update({
+            "product_id": product_id,
+            "site": str(row.get("site") or "US"),
+            "title": str(row.get("title") or ""),
+            "reasons": [{
+                "code": "missing_clean_main",
+                "message": "没有同时通过普通安全审查和主图无文字审查的原图",
+            }],
+            "images": list(row.get("_image_assessments") or []),
+            "source_row": {
+                "site": str(row.get("site") or "US"),
+                "title": str(row.get("title") or ""),
+                "subtitle": str(row.get("subtitle") or ""),
+                "description": str(row.get("desc") or ""),
+                "bullets": list(row.get("bullets") or []),
+                "keywords": str(row.get("keywords") or ""),
+            },
+        })
+        pending_products.append(item)
+
+    context.quality_issues.extend(
+        summarize_row_quality_issues(context.data)
+    )
+    validation = validate_amazon_rows(
+        context.data,
+        extra_issues=context.quality_issues,
+    )
+    validation = attach_audit_to_validation(validation, context.data)
+    run_metrics = _run_metrics(
+        context,
+        validation,
+        problem_product_ids,
+    )
+
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    pending_root = OUTPUT_ROOT / "待人工审核"
+    output_dir = pending_root / f"待定_{stamp}"
+    suffix = 1
+    while output_dir.exists():
+        output_dir = pending_root / f"待定_{stamp}_{suffix:02d}"
+        suffix += 1
+    output_dir.mkdir(parents=True)
+    staging = RUNTIME_ROOT / "staging" / f"{context.request_id}_pending"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    temporary_output = staging / REFILL_NAME
+    try:
+        if safe_rows:
+            write_output_json(
+                safe_rows,
+                temporary_output,
+                problem_product_ids=problem_product_ids,
+            )
+        else:
+            empty_payload = {
+                field: [] for field in AMAZON_JSON_OUTPUT_FIELDS
+            }
+            empty_payload["有问题的产品id"] = list(dict.fromkeys(
+                str(product_id)
+                for product_id in problem_product_ids
+                if str(product_id)
+            ))
+            temporary_output.write_text(
+                json.dumps(empty_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        audit_by_product = {
+            str(row.get("id") or ""): list(
+                row.get("_image_assessments") or []
+            )
+            for row in safe_rows
+        }
+        export_review(
+            temporary_output,
+            output_dir,
+            audit_by_product=audit_by_product,
+            quarantine_products=pending_products,
+            shared_cache_dir=RUNTIME_ROOT / "cache" / "images",
+            translation_cache_path=(
+                RUNTIME_ROOT / "cache" / "review_translation.json"
+            ),
+            run_id=context.request_id,
+            run_metrics=run_metrics,
+            allow_empty_released=True,
+        )
+        (output_dir / "待定商品.json").write_text(
+            json.dumps(pending_products, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        _write_status(
+            output_dir,
+            context=context,
+            published=False,
+            released_products=len(safe_rows),
+            pending_product_ids=pending_ids,
+            problem_product_ids=problem_product_ids,
+            run_metrics=run_metrics,
+        )
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+    return RunResult(
+        output_path=None,
+        review_path=output_dir / REVIEW_NAME,
+        review_data_path=output_dir / REVIEW_DATA_NAME,
+        archived_path=None,
+        retained_products=len(safe_rows),
+        quarantined_products=0,
+        elapsed_s=time.time() - context.started_at,
+        published=False,
+        pending_product_ids=pending_ids,
+    )
 
 
 def _archive_latest() -> Path | None:
@@ -165,6 +490,11 @@ def deliver(
     problem_product_ids: list[str],
 ) -> RunResult:
     """Build all formal artifacts in staging, validate, then publish once."""
+    if any(row.get("_main_selection_pending") for row in context.data):
+        return _deliver_pending(
+            context,
+            problem_product_ids=problem_product_ids,
+        )
     _assert_formal_images_are_safe(context.data, context.runtime_metrics)
     context.quality_issues.extend(
         summarize_row_quality_issues(context.data)
@@ -186,41 +516,7 @@ def deliver(
         problem_product_ids=problem_product_ids,
     )
 
-    if hasattr(context.provider, "metrics_snapshot"):
-        context.metrics.set_provider_metrics(
-            context.provider.metrics_snapshot()
-        )
-    context.metrics.set_concurrency_metrics(
-        context.runtime_metrics.get("concurrency")
-    )
-    context.metrics.set_image_remediation_metrics(
-        context.runtime_metrics.get("image_remediation")
-    )
-    context.metrics.set_quality_metrics(validation)
-    run_metrics = context.metrics.to_dict()
-    run_metrics["image_safety_gate"] = dict(
-        context.runtime_metrics.get("image_safety_gate") or {}
-    )
-    run_metrics["description_rejected_products"] = list(
-        context.runtime_metrics.get("description_rejected_products") or []
-    )
-    run_metrics["problem_product_ids"] = list(
-        dict.fromkeys(
-            str(product_id)
-            for product_id in problem_product_ids
-            if str(product_id)
-        )
-    )
-    for key in (
-        "source",
-        "marketplaces",
-        "image_deduplication",
-        "localization",
-        "attachment_rejected_products",
-    ):
-        value = context.runtime_metrics.get(key)
-        if value is not None:
-            run_metrics[key] = value
+    run_metrics = _run_metrics(context, validation, problem_product_ids)
 
     audit_by_product = {
         str(row.get("id") or ""): list(
@@ -241,6 +537,15 @@ def deliver(
             RUNTIME_ROOT / "cache" / "review_translation.json"
         ),
         run_id=context.request_id,
+        run_metrics=run_metrics,
+    )
+    _write_status(
+        staging,
+        context=context,
+        published=True,
+        released_products=len(context.data),
+        pending_product_ids=(),
+        problem_product_ids=problem_product_ids,
         run_metrics=run_metrics,
     )
     archived = _publish(staging)
@@ -267,6 +572,7 @@ __all__ = [
     "REFILL_NAME",
     "REVIEW_DATA_NAME",
     "REVIEW_NAME",
+    "STATUS_NAME",
     "deliver",
     "load_review_data",
 ]

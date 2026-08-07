@@ -1,7 +1,11 @@
 """Amazon text-quality rules, normalization, auditing, and validation."""
 from __future__ import annotations
 import re
-from ..policy import PROHIBITED_LISTING_TERMS_RE, compile_brand_pattern
+from ..policy import (
+    COMPATIBILITY_BRAND_ALIASES,
+    PROHIBITED_LISTING_TERMS_RE,
+    compile_brand_pattern,
+)
 BRAND_RE = compile_brand_pattern()
 OEM_RE = re.compile('\\b(OEM|Original|Factory|原厂|原装|正品|Genuine)\\b', re.IGNORECASE)
 LOGISTICS_RE = re.compile('(交货时间|发货时间|运输方式|快递|物流|Shipping|Delivery|Express|Freight|Carrier)[：:].*?(?=\\n|$)', re.IGNORECASE)
@@ -38,7 +42,14 @@ DOMAIN_GENERIC_TERMS = {
     'vehicle',
     'vehicles',
 }
-FACT_RE = re.compile('\\b(?:19|20)\\d{2}\\b|\\b\\d+(?:[./-]\\d+)?\\s*(?:mm|cm|m|inch|inches|in|ft|kg|g|lb|lbs|oz|v|volt|volts|w|watt|watts|l|ml|pcs|pc|pack|packs|piece|pieces|key|keys|pin|pins)\\b|\\b[A-Z]{1,5}\\d{1,5}[A-Z0-9-]*\\b|\\b\\d+[A-Z]{1,5}\\b', re.IGNORECASE)
+FACT_RE = re.compile(
+    r'(?<![A-Za-z0-9])(?:19|20)\d{2}(?![A-Za-z0-9])|'
+    r'(?<![A-Za-z0-9])\d+(?:[./-]\d+)?\s*'
+    r'(?i:mm|cm|m|inch|inches|in|ft|kg|g|lb|lbs|oz|v|volt|volts|w|watt|watts|l|ml|pcs|pc|pack|packs|piece|pieces|key|keys|pin|pins)'
+    r'(?![A-Za-z])|'
+    r'(?<![A-Za-z0-9])[A-Z]{1,5}\d{1,5}[A-Z0-9-]*(?![A-Za-z0-9-])|'
+    r'(?<![A-Za-z0-9])\d+[A-Z]{1,5}(?![A-Za-z0-9])'
+)
 
 def plain_text(value):
     text = str(value or '')
@@ -60,9 +71,17 @@ def normalize_fact_marker(marker):
     return marker
 
 def extract_factual_markers(text):
+    text = plain_text(text)
     markers = []
-    for match in FACT_RE.findall(plain_text(text)):
-        marker = normalize_fact_marker(match)
+    for match in FACT_RE.finditer(text):
+        marker = normalize_fact_marker(match.group(0))
+        if (
+            match.start() > 0
+            and text[match.start() - 1] == ':'
+            or marker[:1].isalpha()
+            and re.search(r'(?:19|20)\d{2}', marker)
+        ):
+            continue
         if marker and marker not in markers:
             markers.append(marker)
     return markers
@@ -72,12 +91,31 @@ def missing_factual_markers(source, candidate, limit=8):
     if not source_markers:
         return []
     candidate_markers = set(extract_factual_markers(candidate))
-    return [marker for marker in source_markers if marker not in candidate_markers]
+    candidate_text = plain_text(candidate).lower()
+    return [
+        marker
+        for marker in source_markers
+        if marker not in candidate_markers
+        and not re.search(
+            rf'(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])',
+            candidate_text,
+        )
+    ]
 
 def unexpected_brand_markers(source, candidate):
     """Return model-added brands that were absent from the source."""
-    source_brands = {match.group(0).strip().lower() for match in BRAND_RE.finditer(plain_text(source))}
-    candidate_brands = {match.group(0).strip().lower() for match in BRAND_RE.finditer(plain_text(candidate))}
+    def canonical(value):
+        key = str(value or '').strip().lower()
+        return str(COMPATIBILITY_BRAND_ALIASES.get(key, key)).lower()
+
+    source_brands = {
+        canonical(match.group(0))
+        for match in BRAND_RE.finditer(plain_text(source))
+    }
+    candidate_brands = {
+        canonical(match.group(0))
+        for match in BRAND_RE.finditer(plain_text(candidate))
+    }
     return sorted(candidate_brands - source_brands)
 
 def trim_words(text, limit):
@@ -115,10 +153,10 @@ def is_text_relevant(source, candidate):
         return True
     return bool(relevant_token_overlap(source, candidate_text))
 import re
-ROW_QUALITY_LABELS = {'missing_source_description': '源产品描述缺失', 'title_ai_fallback': '标题 AI 优化降级为规则处理', 'title_fact_loss': '标题关键规格可能丢失', 'description_ai_fallback': '描述 AI 清洗降级为规则处理', 'description_fact_loss': '描述关键规格可能丢失', 'description_relevance_warning': '描述相关性需要复核', 'description_compacted': '描述因 500 字符限制被压缩', 'bullet_rule_fallback': 'Bullet/关键词由规则补全', 'bullet_quality_warning': 'Bullet 内容质量需要复核', 'keyword_quality_warning': '关键词内容质量需要复核', 'subtitle_quality_warning': '副标题内容质量需要复核', 'main_image_generation_failed': '风险主图生成失败并保留原图', 'variant_image_generation_failed': '风险变种图生成失败并保留原图'}
+ROW_QUALITY_LABELS = {'missing_source_description': '源产品描述缺失', 'title_ai_fallback': '标题 AI 优化降级为规则处理', 'title_fact_loss': '标题关键规格可能丢失', 'description_ai_fallback': '描述 AI 清洗降级为规则处理', 'description_fact_loss': '描述关键规格可能丢失', 'description_relevance_warning': '描述相关性需要复核', 'description_compacted': '描述因 500 字符限制被压缩', 'bullet_rule_fallback': 'Bullet/关键词由规则补全', 'bullet_quality_warning': 'Bullet 内容质量需要复核', 'keyword_quality_warning': '关键词内容质量需要复核', 'subtitle_quality_warning': '副标题内容质量需要复核', 'localization_language_warning': '标题/副标题/关键词语言检测提示', 'main_image_generation_failed': '风险主图生成失败并保留原图', 'variant_image_generation_failed': '风险变种图生成失败并保留原图'}
 MAX_ROW_AUDIT_ITEMS = 20
 MAX_VALIDATION_AUDIT_ITEMS = 120
-ISSUE_AUDIT_META = {'missing_source_description': ('读取表格', 'description', 'review'), 'title_ai_fallback': ('标题优化', 'title', 'fallback'), 'title_fact_loss': ('标题优化', 'title', 'review'), 'description_ai_fallback': ('描述清洗', 'description', 'fallback'), 'description_fact_loss': ('描述清洗', 'description', 'review'), 'description_relevance_warning': ('描述清洗', 'description', 'review'), 'description_compacted': ('描述清洗', 'description', 'review'), 'bullet_rule_fallback': ('Bullet+关键词', 'Bullet', 'fallback'), 'bullet_quality_warning': ('Bullet+关键词', 'Bullet', 'review'), 'keyword_quality_warning': ('Bullet+关键词', 'keywords', 'review'), 'subtitle_quality_warning': ('副标题', 'subtitle', 'review')}
+ISSUE_AUDIT_META = {'missing_source_description': ('读取表格', 'description', 'review'), 'title_ai_fallback': ('标题优化', 'title', 'fallback'), 'title_fact_loss': ('标题优化', 'title', 'review'), 'description_ai_fallback': ('描述清洗', 'description', 'fallback'), 'description_fact_loss': ('描述清洗', 'description', 'review'), 'description_relevance_warning': ('描述清洗', 'description', 'review'), 'description_compacted': ('描述清洗', 'description', 'review'), 'bullet_rule_fallback': ('Bullet+关键词', 'Bullet', 'fallback'), 'bullet_quality_warning': ('Bullet+关键词', 'Bullet', 'review'), 'keyword_quality_warning': ('Bullet+关键词', 'keywords', 'review'), 'subtitle_quality_warning': ('副标题', 'subtitle', 'review'), 'localization_language_warning': ('多站点文案校验', 'title', 'review')}
 
 def audit_text(value, limit=180):
     if isinstance(value, (list, tuple)):

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -315,6 +317,99 @@ def test_reorder_images_rejects_missing_or_new_url(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="不能新增、遗漏或重复图片"):
         apply_decisions(formal, decision_path)
+
+
+def test_select_existing_reorder_rejects_ineligible_new_main(tmp_path) -> None:
+    formal = tmp_path / "formal.json"
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    decision_path = tmp_path / "decisions.json"
+    write_json(formal, payload())
+    write_json(review_dir / "审核数据.json", {
+        "summary": {
+            "run_metrics": {
+                "image_safety_gate": {
+                    "processing_mode": "select_existing",
+                },
+            },
+        },
+        "products": [{
+            "product_id": "p1",
+            "images": [
+                {"url": "https://img/main1.jpg", "main_eligible": True},
+                {"url": "https://img/extra1.jpg", "main_eligible": False},
+            ],
+        }],
+    })
+    write_json(decision_path, decisions({
+        "product_id": "p1",
+        "action": "reorder_images",
+        "role": "product_images",
+        "image_urls": [
+            "https://img/extra1.jpg",
+            "https://img/main1.jpg",
+        ],
+    }))
+
+    with pytest.raises(ValueError, match=r"没有 safe \+ text_free 主图资格"):
+        apply_decisions(
+            formal,
+            decision_path,
+            review_package=review_dir,
+        )
+
+
+def test_recheck_main_candidate_invalidates_both_reviews_and_reruns(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from amazon_processor import pipeline
+
+    source = tmp_path / "input.json"
+    source.write_text("{}", encoding="utf-8")
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    runtime_root = tmp_path / ".runtime"
+    cache_path = runtime_root / "cache" / "pipeline" / f"{source_hash}.json"
+    cache_path.parent.mkdir(parents=True)
+    target = "https://img/candidate.jpg"
+    untouched = "https://img/other.jpg"
+    write_json(cache_path, {
+        "risk_assessments": {target: {"status": "safe"}, untouched: {"status": "safe"}},
+        "main_text_assessments": {target: {"status": "risk"}, untouched: {"status": "safe"}},
+    })
+    decision_path = tmp_path / "decisions.json"
+    write_json(decision_path, {
+        "version": 1,
+        "source": str(source),
+        "decisions": [{
+            "product_id": "p1",
+            "action": "recheck_main_candidate",
+            "role": "attachment",
+            "image_url": target,
+        }],
+    })
+    monkeypatch.setattr(pipeline, "RUNTIME_ROOT", runtime_root)
+    monkeypatch.setattr(
+        pipeline,
+        "_process_json_unlocked",
+        lambda path: SimpleNamespace(
+            published=False,
+            output_path=None,
+            review_path=tmp_path / "pending" / "终审包.html",
+            pending_product_ids=("p1",),
+        ),
+    )
+
+    report = review_decisions.apply_latest_decisions(decision_path)
+
+    cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert target not in cache["risk_assessments"]
+    assert target not in cache["main_text_assessments"]
+    assert untouched in cache["risk_assessments"]
+    assert untouched in cache["main_text_assessments"]
+    assert report["status"] == "rechecked"
+    assert report["published"] is False
+    assert report["pending_product_ids"] == ["p1"]
 
 
 def test_dry_run_does_not_mutate_or_create_backup(tmp_path) -> None:

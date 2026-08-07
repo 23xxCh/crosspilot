@@ -75,6 +75,8 @@ COMPATIBILITY_BRAND_ALIASES = {
     '保时捷': 'Porsche',
     '小米': 'Xiaomi',
     '红米': 'Redmi',
+    '特斯拉': 'Tesla',
+    '讴歌': 'Acura',
     '丰田': 'Toyota',
     '本田': 'Honda',
     '奔驰': 'Mercedes-Benz',
@@ -87,6 +89,13 @@ COMPATIBILITY_BRAND_ALIASES = {
     '马自达': 'Mazda',
     '雷克萨斯': 'Lexus',
     '铃木': 'Suzuki',
+    '雪佛兰': 'Chevrolet',
+    '吉普': 'Jeep',
+    '道奇': 'Dodge',
+    '别克': 'Buick',
+    '凯迪拉克': 'Cadillac',
+    '林肯': 'Lincoln',
+    '沃尔沃': 'Volvo',
 }
 
 COMPATIBILITY_BRANDS = list(COMPATIBILITY_BRAND_ALIASES)

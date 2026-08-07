@@ -12,7 +12,7 @@ from ..quality import split_keywords
 _SPACE_RE = re.compile(r"\s+")
 _BRAND_RE = compile_brand_pattern(COMPATIBILITY_BRANDS)
 _OEM_RE = re.compile(
-    r"\b(?:OEM|original|factory|genuine)\b|原厂|原装|正品",
+    r"\b(?:OEM|original\w*|factory\w*|genuine\w*)\b|原厂|原装|正品",
     re.IGNORECASE,
 )
 _DESCRIPTION_LABELS = {
@@ -148,6 +148,7 @@ def compatibility_format_is_valid(title: object, site: object) -> bool:
 def sanitize_localized_subtitle(value: object, site: object = None) -> str:
     text = str(value or "").replace("\r", " ").replace("\n", ", ")
     text = _BRAND_RE.sub(" ", text)
+    text = _OEM_RE.sub(" ", text)
     kept = []
     english = bool(site and get_market(site).language_code == "en")
     for char in text:
@@ -172,6 +173,17 @@ def sanitize_localized_subtitle(value: object, site: object = None) -> str:
     while len(result) > 125 and ", " in result:
         result = result.rsplit(", ", 1)[0]
     return result[:125].strip(" ,;:-")
+
+
+def sanitize_localized_description(value: object) -> str:
+    """Remove prohibited brand/OEM claims while preserving line breaks."""
+    lines = []
+    for raw in str(value or "").replace("\r", "").split("\n"):
+        line = _BRAND_RE.sub(" ", raw)
+        line = _OEM_RE.sub(" ", line)
+        line = _SPACE_RE.sub(" ", line).strip()
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def _unicode_fingerprint(value: object) -> str:
@@ -309,7 +321,14 @@ def localization_violations(row: dict) -> list[str]:
             violations.append(
                 f"language_{field}:{detected[0]}->{market.language_code}"
             )
+    compatibility_label = description_label("Compatibility", market.code)
     for index, line in enumerate(description.splitlines(), start=1):
+        if re.match(
+            rf"^\s*{re.escape(compatibility_label)}\s*:",
+            line,
+            re.IGNORECASE,
+        ):
+            continue
         detected = _detected_language(line, min_letters=40)
         if (
             detected is not None
