@@ -36,25 +36,6 @@ _BACKUP_NAME_RE = re.compile(r"^[0-9]{8}_[0-9]{6}_[0-9a-f]{6}$")
 
 RUNTIME_FIELDS = (
     {
-        "key": "image_processing_mode",
-        "label": "图片处理模式",
-        "type": "enum",
-        "options": (
-            {
-                "value": "select_existing",
-                "label": "只审图并选择原图（默认，不生图）",
-            },
-            {
-                "value": "generate_replacements",
-                "label": "风险图局部编辑（启用生图）",
-            },
-            {
-                "value": "regenerate_all_localized",
-                "label": "全部图片本地化局部编辑（不删图）",
-            },
-        ),
-    },
-    {
         "key": "text_concurrency",
         "label": "文本并发",
         "type": "int",
@@ -65,14 +46,6 @@ RUNTIME_FIELDS = (
     {
         "key": "review_concurrency",
         "label": "审图并发",
-        "type": "int",
-        "min": 1,
-        "max": 100,
-        "step": 1,
-    },
-    {
-        "key": "image_concurrency",
-        "label": "生图并发",
         "type": "int",
         "min": 1,
         "max": 100,
@@ -132,14 +105,6 @@ RUNTIME_FIELDS = (
         "type": "int",
         "min": 1,
         "max": 3600,
-        "step": 1,
-    },
-    {
-        "key": "image_regeneration_routes",
-        "label": "图片修复最大尝试数",
-        "type": "int",
-        "min": 1,
-        "max": 10,
         "step": 1,
     },
     {

@@ -36,7 +36,7 @@ def render_html(
         (((summary.get("run_metrics") or {}).get("image_safety_gate") or {}).get(
             "processing_mode"
         ))
-        or "generate_replacements"
+        or "select_existing"
     )
     select_existing = processing_mode == "select_existing"
     row_fields = (
@@ -157,8 +157,6 @@ def render_html(
                 + '<button data-action="false_positive">标记误判</button>'
                 if select_existing
                 else (
-                    '<button data-action="regenerate_image">'
-                    '重新生成主图/变种图</button>'
                     '<button data-action="delete_image">删除单张附图</button>'
                     '<button data-action="false_positive">标记误判</button>'
                 )
@@ -375,7 +373,6 @@ h2{{margin:10px 0 16px;font-size:21px}} h3{{margin:14px 0 6px;font-size:15px;col
 .image-order-label{{display:block;min-height:22px;color:#0f6b4b;font-weight:700}}
 .main-eligibility{{font-weight:700!important;color:#17613d!important}}
 .image[data-main-eligible="false"] .main-eligibility{{color:#a22!important}}
-.image[data-role="attachment"] .image-actions button[data-action="regenerate_image"]{{display:none}}
 .image:not([data-role="attachment"]) .image-actions button[data-action="delete_image"]{{display:none}}
 .image.status-risk{{border-color:#d84b3e;box-shadow:0 0 0 2px #d84b3e22}}
 .image.status-unknown{{border-color:#d68910;box-shadow:0 0 0 2px #d6891022}}
@@ -438,7 +435,6 @@ function updateProductImageRoles(productCard){{
      delete decisions[oldKey];
      const compatible=current.action==='false_positive'||
        current.action==='recheck_main_candidate'||
-       (role==='main'&&current.action==='regenerate_image')||
        (role==='attachment'&&current.action==='delete_image');
      if(compatible){{current.role=role;decisions[newKey]=current;}}
    }}
@@ -604,10 +600,6 @@ function sameImageMultiset(left,right){{
 function buildReviewedRefill(){{
  if(!embeddedFormalPayload) throw new Error('当前终审包没有内嵌正式回填数据');
  const items=Object.values(decisions);
- const regenerations=items.filter(item=>item.action==='regenerate_image');
- if(regenerations.length){{
-   throw new Error('存在 '+regenerations.length+' 条重新生成图片决定。网页不能调用生图 API，请先导出审核决定并使用 00_常用入口\\02_应用审核结果.bat。');
- }}
  const rechecks=items.filter(item=>item.action==='recheck_main_candidate');
  if(rechecks.length){{
    throw new Error('存在 '+rechecks.length+' 条重新审查主图资格决定。请先导出审核决定并使用 00_常用入口\\02_应用审核结果.bat。');

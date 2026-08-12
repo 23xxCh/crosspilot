@@ -11,8 +11,6 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-from ..images.risk import unknown_image_assessment, validate_image_url
-from ..providers import get_provider, reload_provider
 from ..schema import (
     AMAZON_JSON_OUTPUT_FIELDS,
     validate_columnar_payload,
@@ -25,7 +23,6 @@ ALLOWED_ACTIONS = {
     "approve_product",
     "delete_product",
     "delete_image",
-    "regenerate_image",
     "recheck_main_candidate",
     "reorder_images",
     "false_positive",
@@ -117,38 +114,6 @@ def _remove_row(payload: dict, index: int) -> None:
         del payload[field][index]
 
 
-def _regenerate_safe_image(
-    source_url: str,
-    *,
-    role: str,
-    routes: int = 3,
-) -> tuple[str, dict]:
-    provider = get_provider()
-    last_reason = "generation_failed"
-    for route_offset in range(max(1, min(3, routes))):
-        generated = str(
-            provider.call_image_gen(
-                source_url,
-                is_variant=role in {"variant", "attachment"},
-                context="",
-                route_offset=route_offset,
-            )
-            or ""
-        )
-        valid, reason = validate_image_url(generated)
-        if not valid:
-            last_reason = reason
-            continue
-        assessment = unknown_image_assessment(
-            "generated image accepted for human review without machine recheck"
-        )
-        assessment["accepted_without_machine_review"] = True
-        return generated, assessment
-    raise ValueError(
-        f"图片重新生成后未通过安全复审: {last_reason}"
-    )
-
-
 def _validate_decisions(value: dict) -> list[dict]:
     if not isinstance(value, dict):
         raise ValueError("审核决定 JSON 顶层必须是对象")
@@ -169,15 +134,7 @@ def _validate_decisions(value: dict) -> list[dict]:
             raise ValueError(f"第 {index} 条决定缺少 product_id")
         if action == "delete_image" and role != "attachment":
             raise ValueError(
-                "主图/变种图不能直接删除；请使用 regenerate_image "
-                "或删除整个商品"
-            )
-        if action == "regenerate_image" and role not in {
-            "main",
-            "variant",
-        }:
-            raise ValueError(
-                "regenerate_image 只能用于主图或变种图"
+                "主图/变种图不能直接删除；只能删除整个商品"
             )
         if action == "recheck_main_candidate" and role not in {
             "main",
@@ -188,7 +145,6 @@ def _validate_decisions(value: dict) -> list[dict]:
             )
         if action in {
             "delete_image",
-            "regenerate_image",
             "recheck_main_candidate",
         } and not image_url:
             raise ValueError(
@@ -431,9 +387,7 @@ def apply_decisions(
     decisions = _validate_decisions(decision_envelope)
     planned = []
     false_positive_overrides = []
-    regeneration_results: list[dict[str, Any]] = []
-
-    # Validate targets and do costly generation before any write or backup.
+    # Validate every target before any write or backup.
     formal_ids = {
         str(value) for value in payload["商品id"]
     }
@@ -452,14 +406,6 @@ def apply_decisions(
         if item["action"] == "delete_product"
     }
     present_delete_ids = delete_product_ids & formal_ids
-    if (
-        not dry_run
-        and any(
-            item["action"] == "regenerate_image"
-            for item in decisions
-        )
-    ):
-        reload_provider()
     for item in decisions:
         if item["product_id"] not in formal_ids:
             if item["action"] in {
@@ -476,7 +422,7 @@ def apply_decisions(
                 continue
             raise ValueError(
                 f"隔离商品 {item['product_id']} 不在正式表中，"
-                "不能直接执行图片删除或重新生成；请标记误判后重新跑任务"
+                "不能直接执行图片删除；请标记误判后重新跑任务"
             )
         if item["product_id"] in delete_product_ids:
             if item["action"] != "delete_product":
@@ -513,30 +459,6 @@ def apply_decisions(
                     f"商品 {item['product_id']} 未找到指定附图，"
                     "或该 URL 是主图，拒绝删除"
                 )
-        elif action == "regenerate_image":
-            field = (
-                "产品图片链接"
-                if item["role"] == "main"
-                else "变种图片链接"
-            )
-            images = payload[field][index]
-            if item["role"] == "main":
-                images = reorder_by_product.get(item["product_id"], images)
-            if item["image_url"] not in images:
-                raise ValueError(
-                    f"商品 {item['product_id']} 的 {item['role']} "
-                    "中找不到待生成 URL"
-                )
-            if not dry_run:
-                generated, assessment = _regenerate_safe_image(
-                    item["image_url"],
-                    role=item["role"],
-                )
-                regeneration_results.append({
-                    **item,
-                    "generated_url": generated,
-                    "assessment": assessment,
-                })
         elif action == "recheck_main_candidate":
             raise ValueError(
                 "重新审查主图资格必须使用最新任务入口应用，"
@@ -554,14 +476,6 @@ def apply_decisions(
             "would_backup_review_package": str(package_dir or ""),
         }
 
-    replacements = {
-        (
-            item["product_id"],
-            item["role"],
-            item["image_url"],
-        ): item
-        for item in regeneration_results
-    }
     for product_id in present_delete_ids:
         index = _row_index(payload, product_id)
         _remove_row(payload, index)
@@ -595,24 +509,18 @@ def apply_decisions(
                     if url != item["image_url"]
                 ],
             ]
-        elif item["action"] == "regenerate_image":
-            result = replacements[(
-                item["product_id"],
-                item["role"],
-                item["image_url"],
-            )]
-            field = (
-                "产品图片链接"
-                if item["role"] == "main"
-                else "变种图片链接"
-            )
-            payload[field][index] = [
-                (
-                    result["generated_url"]
-                    if url == item["image_url"] else url
-                )
-                for url in payload[field][index]
-            ]
+
+    missing_attachment_ids = [
+        str(payload["商品id"][index])
+        for index, images in enumerate(payload["产品图片链接"])
+        if len(images) <= 1
+    ]
+    for product_id in missing_attachment_ids:
+        _remove_row(payload, _row_index(payload, product_id))
+    payload["有问题的产品id"] = list(dict.fromkeys([
+        *payload["有问题的产品id"],
+        *missing_attachment_ids,
+    ]))
 
     validate_columnar_payload(
         payload,
@@ -633,7 +541,6 @@ def apply_decisions(
         "decisions_source": str(decisions_path),
         "backups": backups,
         "decisions": decisions,
-        "regenerations": regeneration_results,
         "central_false_positive_overrides": str(
             central_overrides_path
         ),
@@ -662,7 +569,7 @@ def apply_latest_decisions(decisions_json: str | Path) -> dict:
     if rechecks:
         if len(rechecks) != len(normalized):
             raise ValueError(
-                "重新审查主图资格不能与删除、排序或生图决定混合应用"
+                "重新审查主图资格不能与删除或排序决定混合应用"
             )
         source = Path(str(envelope.get("source") or "")).expanduser().resolve()
         if not source.is_file():

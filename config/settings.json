@@ -89,11 +89,9 @@
     }
   },
   "runtime": {
-    "image_processing_mode": "select_existing",
     "text_concurrency": 100,
     "review_concurrency": 15,
     "review_batch_size": 3,
-    "image_concurrency": 4,
     "max_rows": 0,
     "max_input_rows": 10000,
     "agnes_503_retry_limit": 1,
@@ -101,8 +99,6 @@
     "agnes_503_backoff_max_s": 8,
     "agnes_503_circuit_threshold": 3,
     "agnes_503_circuit_cooldown_s": 120,
-    "image_regeneration_routes": 2,
-    "generated_image_review_mode": "human_review",
     "adaptive_failure_rate": 0.25,
     "adaptive_recovery_batches": 3,
     "circuit_failure_threshold": 8,

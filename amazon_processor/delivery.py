@@ -164,17 +164,6 @@ def _assert_formal_images_are_safe(
     """Refuse delivery when any retained image lacks a current safe record."""
     if not runtime_metrics.get("image_safety_gate"):
         return
-    processing_mode = str(
-        (runtime_metrics.get("image_safety_gate") or {}).get(
-            "processing_mode"
-        )
-        or get("IMAGE_PROCESSING_MODE", "select_existing")
-    ).strip().lower()
-    select_existing = processing_mode == "select_existing"
-    human_review_generated = (
-        get("GENERATED_IMAGE_REVIEW_MODE", "strict").strip().lower()
-        == "human_review"
-    )
     violations = []
     for row in data:
         by_role_url = {
@@ -196,17 +185,6 @@ def _assert_formal_images_are_safe(
             if not url:
                 continue
             record = by_role_url.get((role, url)) or {}
-            if (
-                human_review_generated
-                and record.get("source") == "generated"
-                and record.get("accepted_without_machine_review") is True
-            ):
-                continue
-            if (
-                not select_existing
-                and record.get("image_action") == "keep_review"
-            ):
-                continue
             assessment = record.get("assessment") or {}
             if assessment.get("status") != "safe":
                 violations.append(
@@ -217,7 +195,7 @@ def _assert_formal_images_are_safe(
                     }
                 )
                 continue
-            if select_existing and role == "main":
+            if role == "main":
                 text_assessment = record.get("text_assessment") or {}
                 if text_assessment.get("status") != "safe":
                     violations.append({
@@ -276,6 +254,7 @@ def _run_metrics(
         "image_deduplication",
         "localization",
         "attachment_rejected_products",
+        "image_rejected_products",
         "pending_main_products",
     ):
         value = context.runtime_metrics.get(key)
@@ -555,6 +534,23 @@ def deliver(
     problem_product_ids: list[str],
 ) -> RunResult:
     """Build all formal artifacts in staging, validate, then publish once."""
+    if (
+        not context.data
+        and context.runtime_metrics.get("image_rejected_products")
+    ):
+        rejected = list(context.runtime_metrics["image_rejected_products"])
+        context.runtime_metrics["pending_main_products"] = rejected
+        context.data = [
+            dict(item.get("source_row") or {})
+            for item in rejected
+            if isinstance(item.get("source_row"), dict)
+        ]
+        for row in context.data:
+            row["_main_selection_pending"] = True
+        return _deliver_pending(
+            context,
+            problem_product_ids=problem_product_ids,
+        )
     unattended_pending_ids: tuple[str, ...] = ()
     if context.runtime_metrics.get("unattended"):
         original_rows = context.data
@@ -628,6 +624,11 @@ def deliver(
     quarantine_products = list(
         context.runtime_metrics.get("quarantined_products") or []
     )
+    image_problem_ids = tuple(dict.fromkeys(
+        str(item.get("product_id") or "")
+        for item in context.runtime_metrics.get("image_rejected_products") or []
+        if str(item.get("product_id") or "")
+    ))
     if quarantine_products:
         (staging / EXCEPTIONS_NAME).write_text(
             json.dumps(
@@ -672,10 +673,13 @@ def deliver(
         quarantined_products=len(quarantine_products),
         elapsed_s=time.time() - context.started_at,
         pending_product_ids=unattended_pending_ids,
-        isolated_product_ids=unattended_pending_ids,
+        isolated_product_ids=tuple(dict.fromkeys([
+            *unattended_pending_ids,
+            *image_problem_ids,
+        ])),
         exception_path=(
             LATEST_DIR / EXCEPTIONS_NAME
-            if unattended_pending_ids
+            if quarantine_products
             else None
         ),
     )

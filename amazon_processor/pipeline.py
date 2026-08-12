@@ -107,6 +107,9 @@ def _process_json_unlocked(
         ),
     )
     validate_input_rows(rows)
+    input_product_order = list(dict.fromkeys(
+        str(row.get("id") or "") for row in rows if str(row.get("id") or "")
+    ))
     legacy_rows = sum(
         bool(row.get("_legacy_site_defaulted")) for row in rows
     )
@@ -158,7 +161,7 @@ def _process_json_unlocked(
         ),
     }
     context.transform(
-        "审图与生图",
+        "全量审图",
         run_structured_image_safety_gate,
         str(cache_path),
         context.quality_issues,
@@ -174,7 +177,24 @@ def _process_json_unlocked(
     context.runtime_metrics["image_deduplication"][
         "unique_generated_images"
     ] = len(generated_urls)
-    context.runtime_metrics["attachment_rejected_products"] = []
+    image_rejected = list(
+        context.runtime_metrics.get("image_rejected_products") or []
+    )
+    problem_set = {
+        str(product_id)
+        for product_id in problem_product_ids
+        if str(product_id)
+    }
+    problem_set.update(
+        str(item.get("product_id") or "")
+        for item in image_rejected
+        if str(item.get("product_id") or "")
+    )
+    problem_product_ids = [
+        product_id
+        for product_id in input_product_order
+        if product_id in problem_set
+    ]
     text_cache = LocalizationCache(
         RUNTIME_ROOT
         / "cache"

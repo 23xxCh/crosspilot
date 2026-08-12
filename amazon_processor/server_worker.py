@@ -667,10 +667,7 @@ def preflight(input_dir: Path, *, min_free_gb: float = 1.0) -> dict:
         env_path=ENV_PATH,
         environ=os.environ,
     )
-    mode = str(config.get("IMAGE_PROCESSING_MODE") or "select_existing")
     required_operations = ["text", "vision"]
-    if mode != "select_existing":
-        required_operations.append("image")
     missing = []
     for operation in required_operations:
         usable = any(
@@ -702,7 +699,7 @@ def preflight(input_dir: Path, *, min_free_gb: float = 1.0) -> dict:
         )
     return {
         "input_dir": str(input_dir),
-        "image_processing_mode": mode,
+        "image_processing_mode": "select_existing",
         "free_disk_gb": round(free_gb, 2),
         "missing_operations": missing,
         "blocker_reason": (

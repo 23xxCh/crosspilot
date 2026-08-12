@@ -19,14 +19,14 @@
 - 输出字段顺序以 `amazon_processor.schema.AMAZON_JSON_OUTPUT_FIELDS` 为准，共 14 字段；各按行数组必须等长。
 - `商品id`、`产品站点`、商品顺序和图片角色不得错位。
 - 第一张 `产品图片链接` 是主图。
-- `有问题的产品id` 只记录源描述为空或清洗后没有产品内容的商品；图片或模型失败不得写入。
+- `有问题的产品id` 记录源描述无内容、没有合格主图或图片清理后没有产品附图的商品；普通模型失败不得写入。
 - 输入文件只读，正式输出必须通过 staging + 原子发布；失败时保留上一版正式表。
 - 密钥只存未跟踪的 `.env`，不得写入代码、日志、测试快照或文档。
 
 ## 配置与 Prompt
 
 - 密钥：`.env`。
-- 模型、Endpoint、回退、并发、重试、图片模式：`config/settings.json`。
+- 模型、Endpoint、回退、并发、重试：`config/settings.json`。正式批处理图片规则固定为只审图、只删图、不生图。
 - Prompt 注册：`config/prompts/manifest.json`；正文：`config/prompts/**/*.txt`。
 - Python 只能传事实变量，不得新增隐藏 AI 指令。Prompt/模型变化必须进入缓存签名。
 - 管理员入口：`00_常用入口/03_配置与模型.bat`。

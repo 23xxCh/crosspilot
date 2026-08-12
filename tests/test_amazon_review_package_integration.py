@@ -80,31 +80,3 @@ def test_select_existing_rejects_main_without_text_gate(
             rows,
             {"image_safety_gate": {"reviewed": 1}},
         )
-
-
-def test_generate_replacements_keeps_legacy_text_gate_behavior(
-    monkeypatch,
-) -> None:
-    rows = [{
-        "id": "p1",
-        "main_img": "https://img/main.jpg",
-        "extra_imgs": [],
-        "var_imgs": [],
-        "_image_assessments": [{
-            "url": "https://img/main.jpg",
-            "role": "main",
-            "assessment": {"status": "safe"},
-        }],
-    }]
-    monkeypatch.setattr(
-        "amazon_processor.delivery.get",
-        lambda key, default="": (
-            "generate_replacements"
-            if key == "IMAGE_PROCESSING_MODE" else default
-        ),
-    )
-
-    _assert_formal_images_are_safe(
-        rows,
-        {"image_safety_gate": {"reviewed": 1}},
-    )

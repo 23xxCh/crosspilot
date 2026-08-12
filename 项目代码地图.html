@@ -1296,7 +1296,7 @@
             <button class="stage" type="button" data-stage="images">
               <span class="stage-num">03</span>
               <span>
-                <span class="stage-name">审图与生图</span>
+                <span class="stage-name">全量审图与原图选主图</span>
                 <span class="stage-file">images/gate.py</span>
               </span>
               <span class="stage-state">safe only</span>
@@ -1522,37 +1522,37 @@
               <span class="route-arrow" aria-hidden="true">→</span>
               <div class="route-node terminal">
                 <strong>图片执行策略</strong>
-                <small>DELETE / REPAIR / QUARANTINE</small>
+                <small>KEEP / DELETE / RESELECT</small>
               </div>
             </div>
           </article>
 
           <article class="route route-wide">
             <div class="route-label">
-              <h3>风险主图与变种图生图</h3>
-              <span>自动回退链</span>
+              <h3>独立 Agnes 生图测试台</h3>
+              <span>管理员手动工具，不连接正式表</span>
             </div>
             <div class="route-flow">
               <div class="route-node primary">
-                <strong>Agnes Image 2.1</strong>
-                <small>PRIMARY</small>
+                <strong>管理员上传单图</strong>
+                <small>MANUAL INPUT</small>
               </div>
               <span class="route-arrow" aria-hidden="true">→</span>
               <div class="route-node fallback">
-                <strong>Agnes Image 2.0</strong>
-                <small>FALLBACK 01</small>
+                <strong>手动选择 Agnes 模型</strong>
+                <small>ONE CANDIDATE</small>
               </div>
               <span class="route-arrow" aria-hidden="true">→</span>
               <div class="route-node terminal">
-                <strong>GPT Image 中转</strong>
-                <small>FALLBACK 02</small>
+                <strong>仅下载候选图</strong>
+                <small>NO FORMAL WRITE</small>
               </div>
             </div>
             <div class="guard-strip" role="group" aria-label="稳定性机制">
-              <div><strong>503 × 1</strong><span>3–8 秒快速重试</span></div>
-              <div><strong>3 failures</strong><span>触发生图熔断</span></div>
-              <div><strong>120 sec</strong><span>Agnes 冷却窗口</span></div>
-              <div><strong>25%</strong><span>自适应并发降级阈值</span></div>
+              <div><strong>0 requests</strong><span>正式批处理生图</span></div>
+              <div><strong>1 image</strong><span>测试台单次候选</span></div>
+              <div><strong>manual</strong><span>结果由管理员判断</span></div>
+              <div><strong>isolated</strong><span>不修改回填表</span></div>
             </div>
           </article>
         </div>
@@ -1631,11 +1631,11 @@
             </div>
           </article>
 
-          <article class="change-card" data-search="图片 logo 品牌 水印 人物 删除 生成 隔离 安全">
+          <article class="change-card" data-search="图片 logo 品牌 水印 人物 删除 原图 选主图 安全">
             <span class="change-icon">I</span>
             <div>
               <h3>图片安全与处理策略</h3>
-              <p>结构化图审、二次确认、风险附图删除和主图修复隔离。</p>
+              <p>全量结构化图审、风险和持续未知图片删除、原图主图重选。</p>
               <div class="file-links">
                 <a href="amazon_processor/images/gate.py">images/gate.py</a>
                 <a href="amazon_processor/images/risk.py">images/risk.py</a>
@@ -1825,12 +1825,12 @@
       },
       images: {
         kicker: "Stage 03 / Image Safety",
-        title: "审图、修图与隔离",
-        description: "所有主图、附图和已有变种图执行结构化风险检查；生成图片必须再次通过同一安全门。",
+        title: "全量审图、删图与主图重选",
+        description: "所有主图、附图和已有变种图执行结构化风险检查；正式批处理不调用生图。",
         items: [
           "风险附图直接删除",
-          "风险主图和变种图生成后复审",
-          "unknown、冲突或修复失败商品隔离"
+          "风险或持续 unknown 的图片删除",
+          "缺少合格主图或产品附图时删除商品并记录问题 ID"
         ],
         source: "amazon_processor/images/gate.py"
       },
@@ -1950,7 +1950,7 @@
       },
       providers: {
         title: "providers/",
-        description: "把文本、图审和生图请求路由到具体模型，统一记录错误、重试、熔断和回退指标。",
+        description: "把文本和图审请求路由到具体模型；生图 Provider 只供独立管理员测试台使用。",
         upstream: "text / images / review",
         downstream: "DeepSeek / Agnes / GPT Image",
         risk: "高：影响费用、吞吐、稳定性与失败模式",

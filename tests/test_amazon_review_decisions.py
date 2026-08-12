@@ -55,7 +55,9 @@ def test_delete_attachment_and_product_with_backup(tmp_path) -> None:
     review_dir.mkdir()
     (review_dir / "marker.txt").write_text("review", encoding="utf-8")
     decision_path = tmp_path / "decisions.json"
-    write_json(formal, payload())
+    source_payload = payload()
+    source_payload["产品图片链接"][0].append("https://img/extra2.jpg")
+    write_json(formal, source_payload)
     write_json(decision_path, decisions(
         {
             "product_id": "p1",
@@ -80,6 +82,7 @@ def test_delete_attachment_and_product_with_backup(tmp_path) -> None:
     assert updated["商品id"] == ["p1"]
     assert updated["产品图片链接"][0] == [
         "https://img/main1.jpg",
+        "https://img/extra2.jpg",
     ]
     assert updated["有问题的产品id"] == ["p2"]
     assert result["status"] == "applied"
@@ -460,40 +463,3 @@ def test_false_positive_for_quarantined_product_is_recorded(
     )
     assert overrides["overrides"][0]["product_id"] == "quarantined-id"
     assert result["status"] == "applied"
-
-
-def test_manual_main_regeneration_accepts_decodable_image_for_review(monkeypatch) -> None:
-    class Provider:
-        def __init__(self):
-            self.policies = []
-
-        def call_image_gen(self, *_args, **_kwargs):
-            return "https://img/generated.jpg"
-
-        def assess_image(self, _url, *, policy="general"):
-            self.policies.append(policy)
-            if policy == "main_text_free":
-                return {"status": "risk"}
-            return {"status": "safe"}
-
-    provider = Provider()
-    monkeypatch.setattr(
-        review_decisions,
-        "get_provider",
-        lambda: provider,
-    )
-    monkeypatch.setattr(
-        review_decisions,
-        "validate_image_url",
-        lambda _url: (True, ""),
-    )
-
-    generated, assessment = review_decisions._regenerate_safe_image(
-        "https://img/source.jpg",
-        role="main",
-        routes=1,
-    )
-
-    assert generated == "https://img/generated.jpg"
-    assert assessment["accepted_without_machine_review"] is True
-    assert provider.policies == []

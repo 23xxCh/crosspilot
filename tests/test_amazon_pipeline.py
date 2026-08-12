@@ -145,14 +145,16 @@ def test_pipeline_rejects_missing_product_descriptions_before_api(
 ) -> None:
     source = tmp_path / "采集表.json"
     source.write_text(json.dumps({
-        "商品id": ["valid", "empty", "template"],
+        "商品id": ["valid", "image", "empty", "template"],
         "产品标题": [
             "Stainless Steel Mounting Kit",
+            "Aluminum Mounting Plate",
             "Aluminum Door Lock Pins",
             "Tire Valve Stem Caps",
         ],
         "产品描述": [
             "Material: stainless steel. Easy mounting installation.",
+            "Aluminum mounting plate with two installation holes.",
             "",
             (
                 "Store CategoriesStore Categories Product Description "
@@ -165,10 +167,14 @@ def test_pipeline_rejects_missing_product_descriptions_before_api(
                 "https://img.example/valid.jpg",
                 "https://img.example/valid-attachment.jpg",
             ],
+            [
+                "https://img.example/image-main.jpg",
+                "https://img.example/image-attachment.jpg",
+            ],
             ["https://img.example/empty.jpg"],
             ["https://img.example/template.jpg"],
         ],
-        "变种图片链接": [[], [], []],
+        "变种图片链接": [[], [], [], []],
     }, ensure_ascii=False), encoding="utf-8")
     seen: dict[str, object] = {}
     provider = DeterministicProvider()
@@ -178,10 +184,13 @@ def test_pipeline_rejects_missing_product_descriptions_before_api(
 
     def image_gate(rows, *_args, runtime_metrics=None, **_kwargs):
         seen["image_ids"] = [row["id"] for row in rows]
-        runtime_metrics["quarantined_products"] = [{
-            "product_id": "image-risk-only",
+        rejected = next(row for row in rows if row["id"] == "image")
+        runtime_metrics["image_rejected_products"] = [{
+            "product_id": "image",
+            "code": "missing_clean_main",
+            "source_row": dict(rejected),
         }]
-        return rows
+        return [row for row in rows if row["id"] != "image"]
 
     def identity(rows, **_kwargs):
         return rows
@@ -224,10 +233,11 @@ def test_pipeline_rejects_missing_product_descriptions_before_api(
     result = pipeline.process_json(source)
 
     assert result.status == "delivered"
-    assert seen["image_ids"] == ["valid"]
+    assert seen["image_ids"] == ["valid", "image"]
     assert seen["text_ids"] == ["valid"]
     assert seen["delivered_ids"] == ["valid"]
     assert seen["problem_ids"] == [
+        "image",
         "empty",
         "template",
     ]
@@ -239,7 +249,7 @@ def test_pipeline_rejects_missing_product_descriptions_before_api(
     ]
 
 
-def test_pipeline_keeps_product_with_only_main_image(
+def test_pipeline_rejects_product_with_only_main_image_before_text_api(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -272,11 +282,17 @@ def test_pipeline_keeps_product_with_only_main_image(
     monkeypatch.setattr(pipeline, "get_provider", lambda: provider)
     monkeypatch.setattr(pipeline, "RUNTIME_ROOT", tmp_path / ".runtime")
 
-    def image_gate(rows, *_args, **_kwargs):
-        for row in rows:
-            if row["id"] == "no-attachment":
-                row["extra_imgs"] = []
-        return rows
+    def image_gate(rows, *_args, runtime_metrics=None, **_kwargs):
+        rejected = next(row for row in rows if row["id"] == "no-attachment")
+        runtime_metrics["image_rejected_products"] = [{
+            "product_id": "no-attachment",
+            "code": "missing_product_attachment",
+            "source_row": dict(rejected),
+        }]
+        runtime_metrics["attachment_rejected_products"] = [
+            runtime_metrics["image_rejected_products"][0]
+        ]
+        return [row for row in rows if row["id"] == "kept"]
 
     def identity(rows, **_kwargs):
         seen["text_ids"] = [row["id"] for row in rows]
@@ -312,7 +328,7 @@ def test_pipeline_keeps_product_with_only_main_image(
     result = pipeline.process_json(source)
 
     assert result.status == "delivered"
-    assert seen["text_ids"] == ["kept", "no-attachment"]
-    assert seen["delivered_ids"] == ["kept", "no-attachment"]
-    assert seen["problem_ids"] == []
-    assert seen["attachment_rejected"] == []
+    assert seen["text_ids"] == ["kept"]
+    assert seen["delivered_ids"] == ["kept"]
+    assert seen["problem_ids"] == ["no-attachment"]
+    assert seen["attachment_rejected"][0]["product_id"] == "no-attachment"

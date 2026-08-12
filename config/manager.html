@@ -717,7 +717,7 @@
       const runtime = settings.runtime || {};
       $("#tab-runtime").innerHTML = `
         <div class="section-heading">
-          <div><h2>并发与稳定性</h2><p>这里控制文本、审图、生图并发，以及 Agnes 503 快速重试、熔断和恢复策略。超出安全范围的值不能保存。</p></div>
+          <div><h2>并发与稳定性</h2><p>这里控制文本、审图并发，以及 Agnes 503 快速重试、熔断和恢复策略。正式批处理固定不生图。</p></div>
         </div>
         <div class="panel runtime-grid">
           ${serverState.runtime_fields.map(field => field.type === "enum"

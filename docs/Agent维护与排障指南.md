@@ -56,7 +56,7 @@ python -m amazon_processor run --unattended
 
 正式回填表固定为 14 字段，字段顺序由 `AMAZON_JSON_OUTPUT_FIELDS` 定义。修改字段前必须同时更新 schema、fixture、交付校验、API校验、终审包和契约测试。
 
-不要把 `有问题的产品id` 当通用警告列表。它只通知上游删除“源描述为空”或“清理模板后没有产品内容”的商品。其他失败进入 `异常商品.json` 或待审核包。
+不要把 `有问题的产品id` 当通用警告列表。它通知上游删除四类商品：源描述为空、清理模板后没有产品内容、没有合格主图、图片清理后没有产品附图。普通文本模型失败仍进入 `异常商品.json` 或待审核包。
 
 ### 运行产物
 
@@ -97,7 +97,7 @@ python -m amazon_processor run --unattended
 |---|---|---|
 | API 密钥 | `.env` | Git忽略；页面只显示末四位 |
 | 模型、Endpoint、回退顺序 | `config/settings.json` | 每条线路引用命名凭据 |
-| 并发、重试、图片模式 | `config/settings.json` 的 `runtime` | 商品处理中配置只读 |
+| 并发、重试 | `config/settings.json` 的 `runtime` | 商品处理中配置只读 |
 | Prompt 注册和变量 | `config/prompts/manifest.json` | 变量必须与模板完全一致 |
 | AI 指令正文 | `config/prompts/**/*.txt` | Python不得拼接隐藏指令 |
 | 站点语言与连接词 | `config/settings.json` 的 `markets` | 未知站点必须拒绝 |
@@ -112,13 +112,13 @@ python -m amazon_processor run --unattended
 4. 把 Prompt ID加入对应缓存签名。
 5. 增加变量校验和行为测试，并扫描 Python 是否残留指令正文。
 
-## 5. 图片模式
+## 5. 图片规则
 
-- `select_existing`：默认。只审图，从源产品图选择 `safe + text_free` 主图；生图调用必须为0。
-- `generate_replacements`：只局部编辑风险主图/变种图。
-- `regenerate_all_localized`：全部产品图和变种图按站点语言局部编辑，保持图片槽位。
-
-通用要求：第一张产品图是主图；同一URL审图去重；图片或Prompt策略变化必须失效对应缓存；文案Prompt变化不应触发重新审图。生图失败不得用风险原图偷偷发布。
+- 正式批处理只有 `select_existing`：全部源图按 URL 去重审查，风险和持续未知图片删除，生图调用必须为 0。
+- 所有安全产品图均检查主图资格；白底清晰图优先，同等级按源顺序选择。
+- 没有合格主图，或主图之外没有产品附图时，删除整行并加入 `有问题的产品id`；变种图不计为附图。
+- 第一张产品图始终是主图；图片或 Prompt 策略变化必须失效对应缓存；文案 Prompt 变化不应触发重新审图。
+- `06_Agnes生图测试台.bat` 是独立人工工具，只保存候选图，不能写回正式表。
 
 ## 6. Worker状态与故障分类
 
@@ -162,7 +162,7 @@ python -m amazon_processor system-status
 - 不修改或覆盖原采集表。
 - 不清空 `.runtime/cache` 来掩盖缓存签名错误。
 - 不在已有 Worker 运行时启动第二个 Worker。
-- 不因图片或普通质检失败污染 `有问题的产品id`。
+- 普通质检和 Provider 临时失败不写入 `有问题的产品id`；缺主图或缺产品附图按业务规则写入。
 - 不把中间文件、待审核包或旧正式表误报成新交付。
 - 不在文档、异常文本、浏览器API或Git里暴露完整密钥。
 - 不恢复已删除的前端、eBay、XLSX、EXE、Docker或发布兼容层。

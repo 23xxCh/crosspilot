@@ -12,7 +12,7 @@ from .log import PipelineMetrics, log as _log
 
 STAGES = (
     "读取采集表",
-    "审图与生图",
+    "全量审图",
     "标题优化",
     "描述清洗",
     "Bullet与关键词",
