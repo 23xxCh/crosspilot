@@ -11,6 +11,15 @@ from ..quality import split_keywords
 
 _SPACE_RE = re.compile(r"\s+")
 _BRAND_RE = compile_brand_pattern(COMPATIBILITY_BRANDS)
+_TITLE_MAX_FOR_SUBTITLE = 74
+_TITLE_PRIMARY_COMPACT_WORDS = {
+    "decorative", "decorativo", "decorativa", "décoratif", "décorative",
+    "design", "look", "style", "trim",
+}
+_TITLE_MATERIAL_WORDS = {
+    "carbon", "carbone", "carbono", "fiber", "fibra", "fibre",
+}
+_TITLE_PREPOSITIONS = {"de", "di", "em", "en", "in"}
 _OEM_RE = re.compile(
     r"\b(?:OEM|original\w*|factory\w*|genuine\w*)\b|原厂|原装|正品",
     re.IGNORECASE,
@@ -123,9 +132,64 @@ def normalize_localized_title(value: object, site: object) -> str:
         ).rstrip(" ,;:-")
         title = f"{prefix} {market.compatibility_connector} {suffix}"
     title = _SPACE_RE.sub(" ", title).strip(" ,;:-")
-    while len(title) > 75 and " " in title:
-        title = title.rsplit(" ", 1)[0].rstrip(" ,;:-")
-    return title[:75].strip(" ,;:-")
+    if len(title) <= _TITLE_MAX_FOR_SUBTITLE:
+        return title
+
+    brand = _BRAND_RE.search(title)
+    connector = None
+    if brand:
+        connector = re.search(
+            r"\b(?:for|para|pour|per|für)\b\s*$",
+            title[:brand.start()],
+            re.IGNORECASE,
+        )
+    if connector:
+        prefix_words = title[:connector.start()].strip().split()
+        suffix = title[connector.start():].strip()
+        while (
+            len(f"{' '.join(prefix_words)} {suffix}".strip())
+            > _TITLE_MAX_FOR_SUBTITLE
+            and len(prefix_words) > 2
+        ):
+            remove_index = next(
+                (
+                    index
+                    for index in range(len(prefix_words) - 1, 0, -1)
+                    if prefix_words[index].casefold()
+                    in _TITLE_PRIMARY_COMPACT_WORDS
+                ),
+                None,
+            )
+            material = False
+            if remove_index is None:
+                remove_index = next(
+                    (
+                        index
+                        for index in range(len(prefix_words) - 1, 0, -1)
+                        if prefix_words[index].casefold()
+                        in _TITLE_MATERIAL_WORDS
+                    ),
+                    None,
+                )
+                material = remove_index is not None
+            if remove_index is None:
+                remove_index = len(prefix_words) - 1
+            prefix_words.pop(remove_index)
+            if (
+                material
+                and remove_index > 0
+                and prefix_words[remove_index - 1].casefold()
+                in _TITLE_PREPOSITIONS
+            ):
+                prefix_words.pop(remove_index - 1)
+        title = f"{' '.join(prefix_words)} {suffix}".strip()
+
+    if len(title) > _TITLE_MAX_FOR_SUBTITLE:
+        shortened = title[:_TITLE_MAX_FOR_SUBTITLE]
+        if " " in shortened:
+            shortened = shortened.rsplit(" ", 1)[0]
+        title = shortened
+    return title[:_TITLE_MAX_FOR_SUBTITLE].strip(" ,;:-")
 
 
 def compatibility_format_is_valid(title: object, site: object) -> bool:
@@ -151,12 +215,19 @@ def sanitize_localized_subtitle(value: object, site: object = None) -> str:
     text = _OEM_RE.sub(" ", text)
     kept = []
     english = bool(site and get_market(site).language_code == "en")
+    decimal_marker = "\ue000"
+    if not english:
+        text = re.sub(r"(?<=\d),(?=\d)", decimal_marker, text)
     for char in text:
         category = unicodedata.category(char)
         if english:
             allowed = char in " ," or char.isascii() and char.isalnum()
         else:
-            allowed = char in " ,-'" or category[0] in {"L", "N"}
+            allowed = (
+                char == decimal_marker
+                or char in " ,-'"
+                or category[0] in {"L", "N"}
+            )
         if allowed:
             kept.append(char)
         else:
@@ -164,6 +235,7 @@ def sanitize_localized_subtitle(value: object, site: object = None) -> str:
     phrases = []
     seen = set()
     for raw in "".join(kept).split(","):
+        raw = raw.replace(decimal_marker, ",")
         phrase = _SPACE_RE.sub(" ", raw).strip(" ,;:-")
         key = phrase.casefold()
         if phrase and key not in seen:
@@ -273,10 +345,12 @@ def localization_violations(row: dict) -> list[str]:
     bullets = [str(item or "").strip() for item in row.get("bullets") or []]
     keywords = split_keywords(row.get("keywords", ""))
     violations = []
-    if not title or len(title) > 75:
+    if not title or len(title) > _TITLE_MAX_FOR_SUBTITLE:
         violations.append("title_length")
     if not compatibility_format_is_valid(title, market.code):
         violations.append("compatibility_format")
+    if title and not subtitle:
+        violations.append("subtitle_missing")
     if len(title) >= 75 and subtitle:
         violations.append("subtitle_not_allowed")
     if len(subtitle) > 125:

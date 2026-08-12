@@ -29,6 +29,7 @@ REFILL_NAME = "跨境电商自动化回填表.json"
 REVIEW_NAME = "终审包.html"
 REVIEW_DATA_NAME = "审核数据.json"
 STATUS_NAME = "运行状态.json"
+EXCEPTIONS_NAME = "异常商品.json"
 
 
 def _provider_metrics_from_run(run_metrics: dict | None) -> dict:
@@ -111,7 +112,13 @@ def _write_status(
     payload = {
         "version": 1,
         "run_id": context.request_id,
-        "status": "published" if published else "pending_review",
+        "status": (
+            "published_with_warnings"
+            if published and pending_product_ids
+            else "published"
+            if published
+            else "pending_review"
+        ),
         "published": bool(published),
         "source": source,
         "counts": {
@@ -122,6 +129,7 @@ def _write_status(
             "problem_product_ids": len(tuple(problem_product_ids)),
         },
         "pending_product_ids": list(pending_product_ids),
+        "isolated_product_ids": list(pending_product_ids),
         "problem_product_ids": list(dict.fromkeys(
             str(value) for value in problem_product_ids if str(value)
         )),
@@ -301,14 +309,17 @@ def _deliver_pending(
         if product_id not in pending_set:
             continue
         item = pending_by_id.get(product_id, {})
+        reasons = list(item.get("reasons") or [])
+        if not reasons:
+            reasons = [{
+                "code": "missing_clean_main",
+                "message": "没有同时通过普通安全审查和主图无文字审查的原图",
+            }]
         item.update({
             "product_id": product_id,
             "site": str(row.get("site") or "US"),
             "title": str(row.get("title") or ""),
-            "reasons": [{
-                "code": "missing_clean_main",
-                "message": "没有同时通过普通安全审查和主图无文字审查的原图",
-            }],
+            "reasons": reasons,
             "images": list(row.get("_image_assessments") or []),
             "source_row": {
                 "site": str(row.get("site") or "US"),
@@ -413,7 +424,58 @@ def _deliver_pending(
         elapsed_s=time.time() - context.started_at,
         published=False,
         pending_product_ids=pending_ids,
+        isolated_product_ids=pending_ids,
+        exception_path=output_dir / "待定商品.json",
     )
+
+
+def _partition_unattended_rows(
+    rows: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """Keep releasable rows and explain deterministic per-row rejections."""
+    released: list[dict] = []
+    rejected: list[dict] = []
+    for row in rows:
+        reasons: list[dict[str, str]] = []
+        localization_failures = list(
+            row.get("_localization_failure_reasons") or []
+        )
+        if localization_failures:
+            reasons.append({
+                "code": "localization_validation_failed",
+                "message": "多站点文案未通过自动修复："
+                + ", ".join(str(value) for value in localization_failures[:5]),
+            })
+        if row.get("_main_selection_pending"):
+            reasons.append({
+                "code": "missing_clean_main",
+                "message": "没有可自动放行的安全主图",
+            })
+        validation = validate_amazon_rows([row])
+        if not validation.get("passed"):
+            reasons.append({
+                "code": "formal_row_validation_failed",
+                "message": "；".join(validation.get("issues") or [])[:500],
+            })
+        if not reasons:
+            released.append(row)
+            continue
+        rejected.append({
+            "product_id": str(row.get("id") or ""),
+            "site": str(row.get("site") or "US"),
+            "title": str(row.get("title") or ""),
+            "reasons": reasons,
+            "images": list(row.get("_image_assessments") or []),
+            "source_row": {
+                "site": str(row.get("site") or "US"),
+                "title": str(row.get("title") or ""),
+                "subtitle": str(row.get("subtitle") or ""),
+                "description": str(row.get("desc") or ""),
+                "bullets": list(row.get("bullets") or []),
+                "keywords": str(row.get("keywords") or ""),
+            },
+        })
+    return released, rejected
 
 
 def _archive_latest() -> Path | None:
@@ -469,6 +531,9 @@ def _publish(staging: Path) -> Path | None:
 
 def _publish_open_latest_files(staging: Path) -> None:
     """Replace published files individually when Windows keeps latest open."""
+    for optional_name in (EXCEPTIONS_NAME,):
+        if not (staging / optional_name).exists():
+            (LATEST_DIR / optional_name).unlink(missing_ok=True)
     for source in staging.rglob("*"):
         if not source.is_file():
             continue
@@ -490,6 +555,42 @@ def deliver(
     problem_product_ids: list[str],
 ) -> RunResult:
     """Build all formal artifacts in staging, validate, then publish once."""
+    unattended_pending_ids: tuple[str, ...] = ()
+    if context.runtime_metrics.get("unattended"):
+        original_rows = context.data
+        released_rows, rejected_products = _partition_unattended_rows(
+            original_rows
+        )
+        if rejected_products:
+            unattended_pending_ids = tuple(dict.fromkeys(
+                str(item.get("product_id") or "")
+                for item in rejected_products
+                if str(item.get("product_id") or "")
+            ))
+            context.runtime_metrics["unattended_delivery"] = {
+                "input_rows": len(original_rows),
+                "released_rows": len(released_rows),
+                "isolated_rows": len(rejected_products),
+                "isolated_product_ids": list(unattended_pending_ids),
+            }
+            existing_quarantine = list(
+                context.runtime_metrics.get("quarantined_products") or []
+            )
+            context.runtime_metrics["quarantined_products"] = [
+                *existing_quarantine,
+                *rejected_products,
+            ]
+            if not released_rows:
+                for row in original_rows:
+                    row["_main_selection_pending"] = True
+                context.runtime_metrics["pending_main_products"] = (
+                    rejected_products
+                )
+                return _deliver_pending(
+                    context,
+                    problem_product_ids=problem_product_ids,
+                )
+            context.data = released_rows
     if any(row.get("_main_selection_pending") for row in context.data):
         return _deliver_pending(
             context,
@@ -527,6 +628,19 @@ def deliver(
     quarantine_products = list(
         context.runtime_metrics.get("quarantined_products") or []
     )
+    if quarantine_products:
+        (staging / EXCEPTIONS_NAME).write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "run_id": context.request_id,
+                    "items": quarantine_products,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
     export_review(
         output,
         staging,
@@ -544,7 +658,7 @@ def deliver(
         context=context,
         published=True,
         released_products=len(context.data),
-        pending_product_ids=(),
+        pending_product_ids=unattended_pending_ids,
         problem_product_ids=problem_product_ids,
         run_metrics=run_metrics,
     )
@@ -557,6 +671,13 @@ def deliver(
         retained_products=len(context.data),
         quarantined_products=len(quarantine_products),
         elapsed_s=time.time() - context.started_at,
+        pending_product_ids=unattended_pending_ids,
+        isolated_product_ids=unattended_pending_ids,
+        exception_path=(
+            LATEST_DIR / EXCEPTIONS_NAME
+            if unattended_pending_ids
+            else None
+        ),
     )
 
 

@@ -18,6 +18,7 @@ from .control import (
     public_state,
     restore_backup,
     save_payload,
+    test_model_routes,
     validate_payload,
 )
 from .locking import ProcessBusyError
@@ -187,6 +188,12 @@ class ConfigRequestHandler(BaseHTTPRequestHandler):
                     target=self.server.shutdown,
                     daemon=True,
                 ).start()
+                return
+            if path == "/api/test-routes":
+                self._write_json(
+                    HTTPStatus.OK,
+                    {"ok": True, **test_model_routes()},
+                )
                 return
             payload = self._read_json()
             if path == "/api/validate":

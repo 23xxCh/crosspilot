@@ -672,6 +672,7 @@ class CompositeProvider(ModelProvider):
         is_variant: bool = False,
         context: str = "",
         route_offset: int | None = None,
+        image_route: str | None = None,
         **kwargs,
     ) -> Optional[str]:
         def call_with_fallbacks():
@@ -685,13 +686,32 @@ class CompositeProvider(ModelProvider):
                 and self._fallback_image_gen not in providers
             ):
                 providers.append(self._fallback_image_gen)
+            requested_route = str(image_route or "").strip().lower()
+            requested_route = {
+                "translate": "gpt",
+                "translation": "gpt",
+                "remove": "agnes",
+                "removal": "agnes",
+            }.get(requested_route, requested_route)
+            if requested_route not in {"", "gpt", "agnes"}:
+                raise ValueError(f"不支持的生图线路: {requested_route}")
             indexed_providers = list(enumerate(providers))
+            if requested_route == "gpt":
+                indexed_providers = [
+                    item for item in indexed_providers
+                    if isinstance(item[1], GPTImageProvider)
+                ]
+            elif requested_route == "agnes":
+                indexed_providers = [
+                    item for item in indexed_providers
+                    if isinstance(item[1], AgnesProvider)
+                ]
             if route_offset is None:
                 selected_providers = indexed_providers
             else:
                 start_index = max(
                     0,
-                    min(int(route_offset), len(providers)),
+                    min(int(route_offset), len(indexed_providers)),
                 )
                 selected_providers = indexed_providers[
                     start_index:start_index + 1

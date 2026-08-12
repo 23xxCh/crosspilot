@@ -12,7 +12,7 @@ from .log import log as _log, new_request_id
 from .providers import get_provider, reload_provider
 from .policy import enforce_prohibited_listing_terms
 from .runtime import RunContext, RunResult
-from .schema import load_rows, validate_input_rows
+from .schema import load_rows, prepare_input_copy, validate_input_rows
 from .text.descriptions import (
     clean_descriptions,
     enforce_description_safety,
@@ -35,13 +35,21 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def process_json(input_path: str | Path) -> RunResult:
+def process_json(
+    input_path: str | Path,
+    *,
+    unattended: bool = False,
+) -> RunResult:
     """Process one Amazon JSON collection table and publish formal artifacts."""
     with processing_lock():
-        return _process_json_unlocked(input_path)
+        return _process_json_unlocked(input_path, unattended=unattended)
 
 
-def _process_json_unlocked(input_path: str | Path) -> RunResult:
+def _process_json_unlocked(
+    input_path: str | Path,
+    *,
+    unattended: bool = False,
+) -> RunResult:
     """Run with an exclusive configuration snapshot for the whole task."""
     source = Path(input_path).expanduser().resolve()
     if source.suffix.lower() != ".json":
@@ -63,6 +71,7 @@ def _process_json_unlocked(input_path: str | Path) -> RunResult:
         "path": str(source),
         "sha256": source_hash,
     }
+    context.runtime_metrics["unattended"] = bool(unattended)
     _log.info(
         "Amazon JSON处理启动",
         request_id=request_id,
@@ -72,10 +81,25 @@ def _process_json_unlocked(input_path: str | Path) -> RunResult:
     print("=== Amazon JSON 采集表 → 回填表 ===", flush=True)
     print(f"输入: {source}", flush=True)
 
+    normalized_source, normalization_warnings = prepare_input_copy(
+        source,
+        runtime_root=RUNTIME_ROOT,
+    )
+    context.runtime_metrics["source"]["normalized_path"] = (
+        str(normalized_source) if normalized_source != source else ""
+    )
+    context.runtime_metrics["source"]["normalization_warnings"] = list(
+        normalization_warnings
+    )
+    if normalized_source != source:
+        print(
+            f"输入 JSON 已生成安全修复副本: {normalized_source}",
+            flush=True,
+        )
     rows = context.execute(
         "读取采集表",
         load_rows,
-        source,
+        normalized_source,
         max_rows=max(0, int(config.get("MAX_ROWS", "0") or 0)),
         safety_limit=max(
             1,
@@ -229,6 +253,7 @@ def _process_json_unlocked(input_path: str | Path) -> RunResult:
             cache=text_cache,
             provider_getter=get_provider,
             runtime_metrics=context.runtime_metrics,
+            isolate_content_failures=unattended,
         )
     context.data = all_rows
     marketplace_metrics = context.runtime_metrics["marketplaces"]

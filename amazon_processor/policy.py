@@ -87,6 +87,7 @@ COMPATIBILITY_BRAND_ALIASES = {
     '日产': 'Nissan',
     '起亚': 'Kia',
     '马自达': 'Mazda',
+    '斯巴鲁': 'Subaru',
     '雷克萨斯': 'Lexus',
     '铃木': 'Suzuki',
     '雪佛兰': 'Chevrolet',

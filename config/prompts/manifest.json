@@ -145,7 +145,7 @@
       "category": "图片生成",
       "path": "images/main_product.txt",
       "variables": [],
-      "used_by": "Agnes 与 GPT Image 主图局部去除全部文字与标识"
+      "used_by": "Agnes 与 GPT Image 全图局部去标并按站点语言翻译产品信息"
     },
     {
       "id": "images.main_product_reference_free",
@@ -161,7 +161,7 @@
       "category": "图片生成",
       "path": "images/variant.txt",
       "variables": [],
-      "used_by": "Agnes 与 GPT Image 变种图和附图去标与图中文字翻译"
+      "used_by": "Agnes 与 GPT Image 变种图和附图去标与按站点语言翻译"
     },
     {
       "id": "images.listing_context",
@@ -172,6 +172,36 @@
         "context"
       ],
       "used_by": "Agnes 与 GPT Image 生图请求"
+    },
+    {
+      "id": "images.edit_request",
+      "label": "图片局部编辑动态指令",
+      "category": "图片生成",
+      "path": "images/edit_request.txt",
+      "variables": [
+        "listing_title",
+        "standalone_item",
+        "image_role",
+        "edit_policy",
+        "edit_strategy",
+        "target_locale",
+        "detected_text_json",
+        "risk_categories_json",
+        "review_evidence",
+        "previous_rejection"
+      ],
+      "used_by": "风险图片局部编辑时的完整动态 Prompt"
+    },
+    {
+      "id": "images.manual_edit",
+      "label": "Agnes 生图测试台",
+      "category": "图片生成",
+      "path": "images/manual_edit.txt",
+      "variables": [
+        "target_language",
+        "exact_text_instruction"
+      ],
+      "used_by": "本机 Agnes 生图测试台的可编辑默认 Prompt"
     }
   ]
 }

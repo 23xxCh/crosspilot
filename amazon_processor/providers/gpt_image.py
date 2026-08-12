@@ -81,19 +81,24 @@ class GPTImageProvider(ModelProvider):
         context: str = "",
         route_offset: int = 0,
         reference_free: bool = False,
+        prompt_override: str | None = None,
     ) -> Optional[str]:
         del route_offset
-        prompt = (
-            self.MAIN_REFERENCE_FREE_PROMPT
-            if reference_free and not is_variant
-            else (self.VAR_PROMPT if is_variant else self.MAIN_PROMPT)
-        )
-        context_text = str(context or "").strip()[:1400]
-        if context_text:
-            prompt += "\n\n" + get_prompt_registry().render(
-                "images.listing_context",
-                context=context_text,
+        exact_prompt = str(prompt_override or "").strip()
+        if exact_prompt:
+            prompt = exact_prompt
+        else:
+            prompt = (
+                self.MAIN_REFERENCE_FREE_PROMPT
+                if reference_free and not is_variant
+                else (self.VAR_PROMPT if is_variant else self.MAIN_PROMPT)
             )
+            context_text = str(context or "").strip()[:1400]
+            if context_text:
+                prompt += "\n\n" + get_prompt_registry().render(
+                    "images.listing_context",
+                    context=context_text,
+                )
         retries = max(1, int(retries or 1))
         last_error: ProviderError | None = None
         for attempt in range(retries):

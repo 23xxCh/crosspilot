@@ -104,6 +104,43 @@ def test_agnes_image_request_timeout_is_bounded():
     assert provider._session.post.call_args.kwargs["timeout"] == 90
 
 
+def test_agnes_manual_image_edit_uses_prompt_override_and_ratio():
+    from amazon_processor.providers.agnes import AgnesProvider
+
+    response = Mock(ok=True, status_code=200, text="ok", headers={})
+    response.json.return_value = {
+        "data": [{"url": "https://generated.example/manual.png"}],
+    }
+    provider = AgnesProvider(
+        "test-key",
+        image_model="agnes-image-2.1-flash",
+    )
+    provider._acquire_image = lambda: None
+    provider._session = Mock()
+    provider._session.post.return_value = response
+
+    result = provider.call_image_gen(
+        "data:image/png;base64,AAAA",
+        size="1K",
+        retries=1,
+        prompt_override="Translate every Chinese label into English.",
+        ratio="4:3",
+    )
+
+    assert result == "https://generated.example/manual.png"
+    payload = provider._session.post.call_args.kwargs["json"]
+    assert payload == {
+        "model": "agnes-image-2.1-flash",
+        "prompt": "Translate every Chinese label into English.",
+        "size": "1K",
+        "ratio": "4:3",
+        "extra_body": {
+            "image": ["data:image/png;base64,AAAA"],
+            "response_format": "url",
+        },
+    }
+
+
 def test_agnes_reference_free_generation_omits_input_image():
     from amazon_processor.providers.agnes import AgnesProvider
 

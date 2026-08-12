@@ -40,6 +40,8 @@ class RunResult:
     elapsed_s: float
     published: bool = True
     pending_product_ids: tuple[str, ...] = ()
+    isolated_product_ids: tuple[str, ...] = ()
+    exception_path: Path | None = None
 
 
 @dataclass

@@ -189,6 +189,7 @@ def test_pipeline_rejects_missing_product_descriptions_before_api(
     def listing(rows, **_kwargs):
         seen["text_ids"] = [row["id"] for row in rows]
         for row in rows:
+            row["subtitle"] = "Stainless steel material, easy installation"
             row["bullets"] = [f"Valid product detail {index}" for index in range(5)]
             row["keywords"] = (
                 "stainless steel, mounting kit, steel hardware, "

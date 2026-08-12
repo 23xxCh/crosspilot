@@ -1,45 +1,46 @@
-TASK: Perform a minimal local cleanup of the PROVIDED REFERENCE IMAGE. This is
-image-to-image editing, not image generation from scratch. The output must look
-like the original photo with only the unwanted marks locally erased.
+TASK: Edit the PROVIDED REFERENCE IMAGE locally for an Amazon product listing.
+This is image-to-image editing, not image generation from scratch. The image
+must be edited in place; do not redraw or rebuild the scene.
 
-HARD REFERENCE LOCK — higher priority than visual polish:
+HARD REFERENCE LOCK:
 - Keep the exact composition, viewpoint, camera angle, perspective, crop,
-  framing, aspect ratio, object scale, object position, background, lighting,
-  shadows, reflections, colors, materials, textures, and overall style.
-- Preserve the exact same product identity, shape, contour, proportions,
-  quantity, component positions, holes, seams, edges, and every sold part.
+  framing, aspect ratio, object scale and object position.
+- Preserve the exact product identity, shape, contour, proportions, quantity,
+  component positions, holes, seams, edges, colors, materials, texture,
+  lighting, shadows, reflections, background and overall style.
 - Treat every area outside the unwanted marks as locked reference content.
-  Do not repaint, redraw, regenerate, or reinterpret those areas.
-- Do not recenter, zoom, rotate, restage, beautify, simplify, replace the
-  background, improve the photography, or create a new catalog composition.
+  Do not recenter, zoom, rotate, restage, beautify; do not redesign, replace the
+  background, or reconstruct the product.
 
-ONLY ALLOWED EDIT:
-- Remove ALL visible text and text-like content from the main image, regardless
-  of language or purpose. This includes letters, words, numbers, dimensions,
-  model numbers, specifications, labels, packaging text, brand names, vehicle
-  badges and emblems, logo graphics, watermarks, seller/store marks, URLs,
-  marketplace marks, QR codes, promotional labels, price text, and pseudo-text.
-- A vehicle badge or emblem in the reference is always an unwanted mark. The
-  output must not preserve, sharpen, trace, or recreate it. Replace only that
-  badge-sized area with the immediately surrounding plain body color, material,
-  highlight, and reflection so no emblem-shaped residue remains.
-- Do not translate or retain English product information. The final main image
-  should contain no visible text, numbers, labels, logos, or malformed
-  characters.
-- Edit the smallest possible local region around each unwanted mark. Heal that
-  region by continuing the immediately surrounding color, texture, and
-  material. Preserve the underlying surface shape, edge, highlight, and shadow.
-- Never use a large patch, global blur, broad repaint, or full-product redraw.
-  If a mark is on the product, remove only the mark and keep the product surface
-  and geometry unchanged.
+ONLY ALLOWED LOCAL EDITS:
+- Inspect every visible text region before output. Remove ALL text that is a
+  prohibited brand, logo, watermark, store/platform mark, URL or promotion.
+  Product-information text must be handled by language, not copied blindly.
+- Remove brand names, vehicle badges or emblems, logo graphics, watermarks,
+  seller/store names, platform marks, URLs, QR codes, prices and promotional
+  labels. A vehicle logo must be removed completely; the output must not preserve, sharpen, trace, or recreate it.
+- Product information such as dimensions, material, color, compatibility,
+  function and installation notes must appear in the target marketplace
+  language stated in the listing context. Translate Chinese or any other
+  non-English product information into natural English when the target is an
+  English marketplace. Replace every Chinese, Japanese, Korean, Cyrillic or
+  other non-English product-information phrase in the same visual area, using
+  similar scale, font weight and layout. Never leave the original non-English
+  phrase visible or partially copied.
+  Keep already-correct English product information unchanged.
+- Heal only the affected small regions with matching surrounding color,
+  texture, material, highlight and reflection. Do not use broad blur or a
+  large patch. Never use a large patch. Edit the smallest possible local region
+  around each mark.
 
 DO NOT ADD OR INVENT:
-- No new text, labels, marketing copy, brands, logos, pseudo-text, model
-  numbers, people, hands, vehicles, extra parts, missing parts, or a different
-  product.
-- Do not alter unrelated defects or details. Do not change anything merely to
-  make the image cleaner or more attractive.
+- No new product, parts, people, hands, vehicles, brands, logos, labels,
+  marketing copy, fake text, pseudo-text, model numbers or visual redesign.
+- Do not change unrelated details merely to make the image cleaner.
 
-FINAL PRIORITY: first preserve the same reference photo and product; second
-remove the unwanted marks; third make only those tiny repaired areas natural.
-Never reconstruct the whole image to achieve a cleaner result.
+FINAL CHECKLIST: before returning the image, scan the whole image again. No
+non-English product-information text may remain when the target locale is
+English; no prohibited branding, logo, vehicle emblem, watermark or promotion
+may remain. Preserve the original photo and product, and edit only the text or
+mark regions. Never reconstruct the whole image. The result must remain
+recognizably the same image.

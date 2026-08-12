@@ -20,6 +20,7 @@ from ..policy import IMAGE_POLICY_VERSION
 
 
 _CACHE_LOCK = threading.Lock()
+IMAGE_PROVIDER_ROUTING_VERSION = "localized-main-text-preservation-v4"
 
 
 def current_cache_versions() -> tuple[str, str, str]:
@@ -41,12 +42,14 @@ def current_cache_versions() -> tuple[str, str, str]:
     generation_version = build_runtime_signature(
         (
             f"{IMAGE_POLICY_VERSION}:{IMAGE_RISK_POLICY_VERSION}:"
-            f"generated_review={generated_review_mode}"
+            f"generated_review={generated_review_mode}:"
+            f"provider_routing={IMAGE_PROVIDER_ROUTING_VERSION}"
         ),
         "images.main_product",
         "images.main_product_reference_free",
         "images.variant",
         "images.listing_context",
+        "images.edit_request",
     )
     return review_version, main_text_version, generation_version
 

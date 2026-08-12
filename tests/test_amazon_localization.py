@@ -98,6 +98,18 @@ def test_locale_title_and_description_labels_are_deterministic() -> None:
     assert "Lieferumfang: 1 Abdeckung" in description
 
 
+def test_localized_title_compaction_preserves_compatibility_suffix() -> None:
+    title = normalize_localized_title(
+        "Generic Plaque de Levier de Vitesse en Carbone "
+        "pour Toyota Tacoma 2024-2026",
+        "FR",
+    )
+
+    assert len(title) < 75
+    assert title.endswith("pour Toyota Tacoma 2024-2026")
+    assert " en pour " not in title
+
+
 def test_language_validation_rejects_english_copy_for_germany() -> None:
     row = _localized_row()
     row["desc"] = (
@@ -214,6 +226,26 @@ def test_localization_cache_restores_only_valid_current_rows(tmp_path) -> None:
     assert restored["_localization_cache_hit"] is True
 
 
+def test_localization_cache_fills_subtitle_for_short_title(tmp_path) -> None:
+    cache = LocalizationCache(tmp_path / "localization.json")
+    row = _localized_row()
+    row["subtitle"] = ""
+
+    cache.store(row)
+
+    assert row["subtitle"]
+    restored = {**row, "subtitle": "stale"}
+    assert LocalizationCache(cache.path).restore(restored) is True
+    assert restored["subtitle"] == row["subtitle"]
+
+
+def test_localization_rejects_blank_subtitle_for_short_title() -> None:
+    row = _localized_row()
+    row["subtitle"] = ""
+
+    assert "subtitle_missing" in localization_violations(row)
+
+
 def test_localization_cache_restores_successful_partial_stages(tmp_path) -> None:
     path = tmp_path / "localization.json"
     cache = LocalizationCache(path)
@@ -291,6 +323,16 @@ def test_localized_non_title_fields_remove_brand_and_oem_claims() -> None:
     assert sanitize_localized_subtitle("OEM Honda Zubehör", "DE") == "Zubehör"
 
 
+def test_localized_subtitle_preserves_decimal_comma() -> None:
+    assert (
+        sanitize_localized_subtitle(
+            "diametro interno 3 cm, diametro esterno 3,8 cm",
+            "IT",
+        )
+        == "diametro interno 3 cm, diametro esterno 3,8 cm"
+    )
+
+
 def test_repair_postprocessing_enforces_limits_counts_and_source_facts() -> None:
     row = _localized_row()
     row["_description_source_block"] = (
@@ -330,6 +372,16 @@ class _GermanRepairProvider:
         }, ensure_ascii=False)
 
 
+class _InvalidRepairProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def call_text(self, _prompt, max_tokens=4096):
+        del max_tokens
+        self.calls += 1
+        return "{}"
+
+
 def test_final_repair_persists_successful_row(tmp_path) -> None:
     row = _localized_row()
     row["title"] = "English switch cover"
@@ -350,3 +402,30 @@ def test_final_repair_persists_successful_row(tmp_path) -> None:
     assert provider.calls == 1
     assert localization_violations(row) == []
     assert cache.writes == 1
+
+
+def test_unattended_localization_marks_content_failure_for_isolation(
+    tmp_path,
+) -> None:
+    row = _localized_row()
+    row["subtitle"] = ""
+    provider = _InvalidRepairProvider()
+    metrics = {}
+
+    ensure_localized_rows(
+        [row],
+        cache=LocalizationCache(tmp_path / "localization.json"),
+        provider_getter=lambda: provider,
+        runtime_metrics=metrics,
+        retry_delays=(0,),
+        isolate_content_failures=True,
+    )
+
+    assert provider.calls == 3
+    assert row["_localization_failure_reasons"]
+    assert metrics["localization"]["completed"] == 0
+    assert metrics["localization"]["isolated_content_failures"] == [{
+        "product_id": "item-de",
+        "site": "DE",
+        "violations": row["_localization_failure_reasons"],
+    }]

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+from datetime import datetime
 from typing import Any
 
 from .markets import normalize_market_code
@@ -45,6 +46,132 @@ AMAZON_JSON_OUTPUT_FIELDS = (
 )
 
 _IMAGE_FIELDS = ('产品图片链接', '变种图片链接')
+
+
+def _escape_raw_string_newlines(raw: str) -> str:
+    """Escape literal line breaks inside JSON strings from collector exports."""
+    output: list[str] = []
+    in_string = False
+    escaped = False
+    for char in raw:
+        if in_string:
+            if escaped:
+                output.append(char)
+                escaped = False
+                continue
+            if char == '\\':
+                output.append(char)
+                escaped = True
+                continue
+            if char == '"':
+                output.append(char)
+                in_string = False
+                continue
+            if char == '\r':
+                continue
+            if char == '\n':
+                output.append('\\n')
+                continue
+            output.append(char)
+            continue
+        output.append(char)
+        if char == '"':
+            in_string = True
+    return ''.join(output)
+
+
+def _insert_unambiguous_array_commas(raw: str) -> str:
+    """Repair omitted commas between adjacent JSON array values only."""
+    repaired = re.sub(
+        r'(?<=[\]"])\s*(?=[\["])',
+        ',\n',
+        raw,
+    )
+    # Some collectors omit the outer close bracket after nested product-image
+    # arrays. The following field boundary makes that missing bracket
+    # unambiguous without touching arbitrary JSON structures.
+    repaired = re.sub(
+        r'(\n\s*\],\n\s*"变种图片链接"\s*:)',
+        '\n  ],\n  ],\n  "变种图片链接":',
+        repaired,
+        count=1,
+    )
+    repaired = repaired.replace(
+        '\n  ],\n  ],\n  "变种图片链接":',
+        '\n  ]\n],\n  "变种图片链接":',
+        1,
+    )
+    if repaired.rstrip().endswith(']'):
+        repaired = repaired.rstrip() + '\n}\n'
+    return repaired
+
+
+def prepare_input_copy(
+    path: str | os.PathLike[str],
+    *,
+    runtime_root: str | os.PathLike[str] | None = None,
+) -> tuple[Path, list[str]]:
+    """Validate input, or create a timestamped copy for safe structural repair.
+
+    The original collector file is never rewritten. Only literal string
+    newlines and unambiguous adjacent array separators are repaired. A
+    missing trailing variant row is treated as an empty optional list; any
+    other array-length mismatch remains a hard error.
+    """
+    source = Path(path).expanduser().resolve()
+    try:
+        raw = source.read_text(encoding='utf-8-sig')
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f'无法读取 Amazon 输入文件: {exc}') from exc
+    try:
+        payload = json.loads(raw)
+        return source, []
+    except json.JSONDecodeError:
+        repaired = _insert_unambiguous_array_commas(
+            _escape_raw_string_newlines(raw)
+        )
+    try:
+        payload = json.loads(repaired)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f'输入 JSON 损坏，无法安全修复（未调用 API）: {exc}'
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ValueError('输入 JSON 顶层必须是对象')
+    warnings: list[str] = []
+    row_count = len(payload.get('商品id') or [])
+    for field in ('商品id', '产品站点', '产品标题', '产品描述', '产品图片链接'):
+        values = payload.get(field)
+        if not isinstance(values, list) or len(values) != row_count:
+            raise ValueError(
+                f'字段“{field}”无法安全修复：需要 {row_count} 行，实际 '
+                f'{len(values) if isinstance(values, list) else "非数组"}'
+            )
+    variants = payload.get('变种图片链接')
+    if not isinstance(variants, list):
+        raise ValueError('字段“变种图片链接”无法安全修复：不是数组')
+    if len(variants) < row_count:
+        missing = row_count - len(variants)
+        variants.extend([[] for _ in range(missing)])
+        warnings.append(
+            f'变种图片链接缺少末尾 {missing} 行，按无变种图补为空数组'
+        )
+    elif len(variants) != row_count:
+        raise ValueError(
+            f'字段“变种图片链接”无法安全修复：需要 {row_count} 行，实际 '
+            f'{len(variants)}'
+        )
+    payload['变种图片链接'] = variants
+    root = Path(runtime_root) if runtime_root else source.parent / '.runtime'
+    destination_dir = root / 'normalized_inputs'
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    destination = destination_dir / f'{source.stem}_修复副本_{stamp}.json'
+    destination.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
+        encoding='utf-8',
+    )
+    return destination, warnings
 
 
 def validate_columnar_payload(

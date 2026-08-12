@@ -403,14 +403,53 @@ def test_ai_instruction_fragments_live_only_in_prompt_files() -> None:
         PROJECT_ROOT / "amazon_processor" / "review" / "translation.py",
         PROJECT_ROOT / "amazon_processor" / "providers" / "agnes.py",
         PROJECT_ROOT / "amazon_processor" / "providers" / "gpt_image.py",
+        PROJECT_ROOT / "amazon_processor" / "images" / "gate.py",
     ]
     source = "\n".join(path.read_text(encoding="utf-8") for path in source_files)
 
     assert "LISTING CONTEXT:" not in source
     assert "你是跨境电商商品文案翻译员" not in source
+    assert "MAIN IMAGE ZERO-TEXT RULE" not in source
+    assert "REFERENCE-PRESERVING LOCAL EDIT" not in source
     assert (
         PROJECT_ROOT / "config" / "prompts" / "images" / "listing_context.txt"
     ).read_text(encoding="utf-8").startswith("LISTING CONTEXT:")
+    edit_prompt = (
+        PROJECT_ROOT / "config" / "prompts" / "images" / "edit_request.txt"
+    ).read_text(encoding="utf-8")
+    assert "MAIN IMAGE ZERO-TEXT RULE" in edit_prompt
+    assert "REFERENCE-PRESERVING LOCAL EDIT" in edit_prompt
+
+
+def test_route_test_uses_saved_credentials_without_returning_them(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    control = _patch_control_paths(monkeypatch, tmp_path)
+    seen_credentials = []
+
+    def fake_probe(operation, index, target, credential_value, *, timeout):
+        seen_credentials.append(credential_value)
+        return {
+            "operation": operation,
+            "route_index": index,
+            "route_label": "主线路" if index == 0 else f"备用线路 {index}",
+            "provider": target.provider,
+            "model": target.model,
+            "base_url": target.base_url,
+            "status": "ok",
+            "http_status": 200,
+            "latency_ms": int(timeout),
+            "message": "ok",
+        }
+
+    monkeypatch.setattr(control, "_probe_route", fake_probe)
+    result = control.test_model_routes(timeout=2)
+
+    assert result["tested"] == result["passed"]
+    assert seen_credentials
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert "secret-for-" not in serialized
 
 
 def test_image_generation_cache_includes_listing_context(monkeypatch) -> None:
@@ -431,6 +470,7 @@ def test_image_generation_cache_includes_listing_context(monkeypatch) -> None:
         "images.main_text_free_review_batch",
     )
     assert "images.listing_context" in calls[2]
+    assert "images.edit_request" in calls[2]
 
 
 def test_main_image_prompt_locks_reference_to_local_zero_text_editing() -> None:
@@ -445,10 +485,12 @@ def test_main_image_prompt_locks_reference_to_local_zero_text_editing() -> None:
     assert "image-to-image editing, not image generation from scratch" in prompt
     assert "HARD REFERENCE LOCK" in prompt
     assert "every area outside the unwanted marks as locked" in prompt
-    assert "Remove ALL visible text" in prompt
+    assert "Remove ALL text that is" in prompt
     assert "Edit the smallest possible local region" in prompt
     assert "Never use a large patch" in prompt
     assert "Do not recenter, zoom, rotate, restage, beautify" in prompt
     assert "Never reconstruct the whole image" in prompt
-    assert "Do not translate or retain English" in prompt
+    assert "Replace every" in prompt
+    assert "Never leave the original non-English" in prompt
+    assert "Translate Chinese or any other" in prompt
     assert "must not preserve, sharpen, trace, or recreate it" in prompt

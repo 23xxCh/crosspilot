@@ -1486,7 +1486,7 @@
           </div>
           <p>
             模型、端点与命名凭据集中在 settings.json，可通过
-            03_配置管理.bat 修改。业务代码只调用统一 Provider。
+            00_常用入口/03_配置与模型.bat 修改。业务代码只调用统一 Provider。
           </p>
         </div>
 
@@ -1648,9 +1648,9 @@
             <span class="change-icon">M</span>
             <div>
               <h3>模型、端点与并发</h3>
-              <p>双击 03_配置管理.bat；命名凭据、模型、回退和并发在一个页面维护。</p>
+              <p>双击 00_常用入口/03_配置与模型.bat；命名凭据、模型、回退和并发在一个页面维护。</p>
               <div class="file-links">
-                <a href="03_配置管理.bat">03_配置管理.bat</a>
+                <a href="00_常用入口/03_配置与模型.bat">03_配置与模型.bat</a>
                 <a href="config/settings.json">config/settings.json</a>
                 <a href="amazon_processor/config/manager.py">config/manager.py</a>
                 <a href="amazon_processor/config/models.py">config/models.py</a>
@@ -1786,7 +1786,7 @@
         <div class="vibe-box">
           <div>
             <h3>推荐的 Vibe Coding 开场</h3>
-            <pre class="vibe-prompt" id="vibe-prompt">先打开《代码地图.html》，再用 CodeGraph 查询目标符号的 callers、callees 和 impact radius。先告诉我会影响哪些模块与测试，再修改代码。</pre>
+            <pre class="vibe-prompt" id="vibe-prompt">先打开《项目代码地图.html》，再用 CodeGraph 查询目标符号的 callers、callees 和 impact radius。先告诉我会影响哪些模块与测试，再修改代码。</pre>
           </div>
           <button class="copy-button" id="copy-prompt" type="button">复制提示词</button>
         </div>
@@ -1959,7 +1959,7 @@
       config: {
         title: "config/",
         description: "本地管理中心统一维护命名凭据、模型线路、并发、重试和 manifest Prompt；密钥只写入未跟踪的 .env。",
-        upstream: "03_配置管理.bat / 人工配置",
+        upstream: "00_常用入口/03_配置与模型.bat / 人工配置",
         downstream: "providers / text / images / cache signatures",
         risk: "中高：保存前会验证并自动备份，处理运行期间禁止修改",
         source: "amazon_processor/config/manager.py"

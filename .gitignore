@@ -14,7 +14,7 @@ __pycache__/
 # Runtime and delivery
 .runtime/
 02_处理结果/
-审核后/
+03_人工审核决定/
 *.log
 
 # Local source data
@@ -22,7 +22,7 @@ __pycache__/
 跨境电商自动化采集表*.json
 
 # Local AI models
-04_本地模型/
+04_本地审图模型/
 
 # Local tools
 .codegraph/

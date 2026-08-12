@@ -35,6 +35,7 @@ from .locale import (
     sanitize_localized_description,
     sanitize_localized_subtitle,
 )
+from .subtitles import normalize_subtitle_for_row
 
 
 LOCALIZATION_POLICY_VERSION = "multi-market-localization-v3"
@@ -138,6 +139,7 @@ class LocalizationCache:
             if field in fields:
                 row[field] = fields.get(field)
                 restored_fields.append(field)
+        normalize_subtitle_for_row(row)
         row["_localization_partial_fields"] = restored_fields
         _record_language_review_warnings(row)
         if not (legacy or value.get("complete") is True):
@@ -149,6 +151,7 @@ class LocalizationCache:
         return True
 
     def store(self, row: dict) -> None:
+        normalize_subtitle_for_row(row)
         _record_language_review_warnings(row)
         if _all_violations(row):
             raise LocalizationValidationError("拒绝缓存未通过本地化校验的文案")
@@ -166,7 +169,7 @@ class LocalizationCache:
         selected = {field: row.get(field) for field in fields}
         if "title" in selected:
             title = str(selected.get("title") or "").strip()
-            if not title or len(title) > 75:
+            if not title or len(title) > 74:
                 return False
         if "desc" in selected:
             description = str(selected.get("desc") or "").strip()
@@ -505,6 +508,7 @@ def ensure_localized_rows(
     progress=None,
     sleep: Callable[[float], None] = time.sleep,
     retry_delays: tuple[int, ...] = (30, 120, 300, 600),
+    isolate_content_failures: bool = False,
 ) -> list[dict]:
     """Repair invalid rows; retry transient provider failures without publishing."""
     provider_getter = provider_getter or _default_get_provider
@@ -520,6 +524,7 @@ def ensure_localized_rows(
     stats["initial_pending"] = len(pending)
     stats.setdefault("repair_attempts", 0)
     stats.setdefault("transient_retry_rounds", 0)
+    isolated_failures: list[dict[str, object]] = []
     delay_index = 0
     while pending:
         next_pending: list[dict] = []
@@ -553,9 +558,23 @@ def ensure_localized_rows(
                 f"{row.get('id')}[{row.get('site')}]:{','.join(violations)}"
                 for row, violations in content_failures[:10]
             )
-            raise LocalizationValidationError(
-                "多站点文案连续修复后仍不合格，正式表未发布: " + details
-            )
+            if not isolate_content_failures:
+                raise LocalizationValidationError(
+                    "多站点文案连续修复后仍不合格，正式表未发布: " + details
+                )
+            for row, violations in content_failures:
+                normalized = list(dict.fromkeys(str(value) for value in violations))
+                row["_localization_failure_reasons"] = normalized
+                add_quality_issue(
+                    row,
+                    "localization_validation_failed",
+                    "多站点文案连续修复后仍不合格：" + ", ".join(normalized[:5]),
+                )
+                isolated_failures.append({
+                    "product_id": str(row.get("id") or ""),
+                    "site": str(row.get("site") or "US"),
+                    "violations": normalized,
+                })
         pending = next_pending
         if pending:
             stats["transient_retry_rounds"] += 1
@@ -565,7 +584,8 @@ def ensure_localized_rows(
             sleep(delay)
     stats["cache_hits"] = cache.hits
     stats["cache_writes"] = cache.writes
-    stats["completed"] = len(rows)
+    stats["completed"] = len(rows) - len(isolated_failures)
+    stats["isolated_content_failures"] = isolated_failures
     warning_rows = [
         row for row in rows if row.get("_localization_warnings")
     ]

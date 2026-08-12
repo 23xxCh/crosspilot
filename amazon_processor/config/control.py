@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import hashlib
 import json
@@ -10,7 +11,10 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import time
 from typing import Any, Iterator
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from .credentials import CredentialStore, read_env_values
@@ -43,6 +47,10 @@ RUNTIME_FIELDS = (
             {
                 "value": "generate_replacements",
                 "label": "风险图局部编辑（启用生图）",
+            },
+            {
+                "value": "regenerate_all_localized",
+                "label": "全部图片本地化局部编辑（不删图）",
             },
         ),
     },
@@ -348,6 +356,96 @@ def public_state() -> dict[str, Any]:
         "prompts": _prompt_payload(prompts),
         "runtime_fields": list(RUNTIME_FIELDS),
         "backups": list_backups(),
+    }
+
+
+def _route_probe_url(provider: str, base_url: str) -> str:
+    base = str(base_url or "").rstrip("/")
+    if provider == "ollama":
+        return base + "/api/tags"
+    return base + ("/models" if base.endswith("/v1") else "/v1/models")
+
+
+def _probe_route(
+    operation: str,
+    index: int,
+    target,
+    credential_value: str,
+    *,
+    timeout: float,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    result = {
+        "operation": operation,
+        "route_index": index,
+        "route_label": "主线路" if index == 0 else f"备用线路 {index}",
+        "provider": target.provider,
+        "model": target.model,
+        "base_url": target.base_url,
+        "status": "unavailable",
+        "http_status": None,
+        "latency_ms": 0,
+        "message": "连接失败",
+    }
+    if target.provider != "ollama" and not credential_value:
+        result.update(status="missing_key", message="未配置 API 密钥")
+        return result
+    headers = {"Accept": "application/json"}
+    if credential_value:
+        headers["Authorization"] = f"Bearer {credential_value}"
+    request = Request(
+        _route_probe_url(target.provider, target.base_url),
+        headers=headers,
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=max(1.0, float(timeout))) as response:
+            status_code = int(getattr(response, "status", 200) or 200)
+            response.read(256)
+        result.update(
+            status="ok",
+            http_status=status_code,
+            message="Endpoint 与密钥可访问（未调用付费模型）",
+        )
+    except HTTPError as exc:
+        status_code = int(exc.code)
+        if status_code in {401, 403}:
+            status, message = "auth_error", "密钥或 Endpoint 不匹配"
+        elif status_code == 404:
+            status, message = "reachable", "Endpoint 可连接，但不支持模型列表检查"
+        elif status_code == 429:
+            status, message = "rate_limited", "线路可连接，但当前受到限流"
+        else:
+            status, message = "http_error", f"Endpoint 返回 HTTP {status_code}"
+        result.update(status=status, http_status=status_code, message=message)
+    except (TimeoutError, URLError, OSError) as exc:
+        result["message"] = f"{type(exc).__name__}: 无法连接 Endpoint"
+    finally:
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+    return result
+
+
+def test_model_routes(*, timeout: float = 8.0) -> dict[str, Any]:
+    """Probe saved route endpoints without sending an inference request."""
+    registry = ModelRegistry.from_file(SETTINGS_PATH)
+    credentials = CredentialStore(registry, env_path=ENV_PATH)
+    work = [
+        (operation, index, target, credentials.value(target.credential))
+        for operation in ("text", "vision", "image")
+        for index, target in enumerate(registry.routes(operation))
+    ]
+    with ThreadPoolExecutor(max_workers=max(1, min(8, len(work)))) as pool:
+        results = list(pool.map(
+            lambda item: _probe_route(*item, timeout=timeout),
+            work,
+        ))
+    return {
+        "tested": len(results),
+        "passed": sum(
+            item["status"] in {"ok", "reachable", "rate_limited"}
+            for item in results
+        ),
+        "results": results,
     }
 
 
@@ -711,6 +809,7 @@ __all__ = [
     "list_backups",
     "public_state",
     "restore_backup",
+    "test_model_routes",
     "save_payload",
     "validate_payload",
 ]

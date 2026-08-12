@@ -66,6 +66,10 @@ def test_unexpected_brands_match_chinese_compatibility_aliases() -> None:
         "适用于讴歌 2022-2025",
         "Generic Accessory for Acura 2022-2025",
     ) == []
+    assert amazon_quality.unexpected_brand_markers(
+        "适用于斯巴鲁 32 英尺车门密封条",
+        "Generic Door Seal Strip for Subaru 32 ft",
+    ) == []
 
 
 def test_quality_interface_accepts_complete_listing_row() -> None:
@@ -114,3 +118,32 @@ def test_quality_rejects_invalid_subtitle_shape() -> None:
     result = amazon_quality.validate_amazon_rows([row])
 
     assert any("副标题" in issue for issue in result["issues"])
+
+
+def test_quality_rejects_blank_subtitle_for_short_title() -> None:
+    row = {
+        "title": "Generic Stainless Trailer Hitch Lock 2 Pack",
+        "subtitle": "",
+        "desc": (
+            "Stainless steel trailer lock with corrosion resistance "
+            "and simple receiver installation."
+        ),
+        "main_img": "https://img.example/main.jpg",
+        "bullets": [
+            "Stainless steel construction supports regular towing use",
+            "Corrosion resistant finish suits outdoor receiver hardware",
+            "Trailer hitch design secures compatible towing accessories",
+            "Simple installation supports routine lock replacement",
+            "Two pack configuration provides matching receiver hardware",
+        ],
+        "keywords": (
+            "trailer hitch lock, stainless lock pin, towing receiver lock, "
+            "corrosion resistant lock, trailer security hardware, "
+            "receiver pin lock, towing accessory lock, hitch replacement pin, "
+            "outdoor trailer lock, two pack lock"
+        ),
+    }
+
+    result = amazon_quality.validate_amazon_rows([row])
+
+    assert any("副标题不能为空" in issue for issue in result["issues"])

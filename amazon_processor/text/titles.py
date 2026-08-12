@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from ..policy import COMPATIBILITY_BRAND_ALIASES, COMPATIBILITY_BRANDS, STRIP_ONLY_BRANDS, compile_brand_pattern
-TITLE_MAX_LENGTH = 75
+TITLE_MAX_LENGTH = 74
 _COMPATIBILITY_RE = compile_brand_pattern(COMPATIBILITY_BRANDS)
 _STRIP_ONLY_RE = compile_brand_pattern(STRIP_ONLY_BRANDS)
 _FIT_MARKER_RE = re.compile('(?<![A-Za-z0-9])(?:fits?\\s+for|fitment\\s+for|compatible\\s+with|for)(?![A-Za-z0-9])\\s*', re.IGNORECASE)
@@ -182,7 +182,7 @@ def optimize_titles(data, progress=None, provider_getter=None):
         if title != row['title']:
             row['title'] = title
             changed += 1
-            _add_audit(row, '标题优化', 'title', original_title, title, method='rule', reason='normalize_title', action='确认标题兼容表达和 75 字符限制')
+            _add_audit(row, '标题优化', 'title', original_title, title, method='rule', reason='normalize_title', action='确认标题为副标题预留展示空间')
         if progress:
             progress(index + 1, max(1, len(data) * 2))
     print(f'  规则优化: {changed} 行', flush=True)
@@ -258,12 +258,12 @@ def optimize_titles(data, progress=None, provider_getter=None):
 
 def clamp_title(title):
     title = str(title or '').strip()
-    if len(title) <= 75:
+    if len(title) <= TITLE_MAX_LENGTH:
         return title
-    shortened = title[:75]
+    shortened = title[:TITLE_MAX_LENGTH]
     if ' ' in shortened:
         shortened = shortened.rsplit(' ', 1)[0]
-    return shortened[:75].strip()
+    return shortened[:TITLE_MAX_LENGTH].strip()
 
 def normalize_title(title):
     return normalize_amazon_title(title)

@@ -10,6 +10,7 @@ from amazon_processor.schema import (
     build_output_payload,
     load_columnar_json,
     load_rows,
+    prepare_input_copy,
     write_output_json,
 )
 
@@ -188,6 +189,35 @@ def test_load_rejects_mismatched_column_lengths(tmp_path):
 
     with pytest.raises(ValueError, match='数组长度必须一致'):
         load_columnar_json(str(path))
+
+
+def test_prepare_input_copy_repairs_collector_separators_without_touching_source(
+    tmp_path,
+):
+    source = tmp_path / 'collector.json'
+    raw = '''{
+  "商品id": ["one" "two"],
+  "产品站点": ["US" "DE"],
+  "产品标题": ["One" "Two"],
+  "产品描述": ["line one
+line two" "description"],
+  "产品图片链接": [["https://img/one.jpg"] ["https://img/two.jpg"]],
+  "变种图片链接": [[]]
+}'''
+    source.write_text(raw, encoding='utf-8')
+    original = source.read_bytes()
+
+    normalized, warnings = prepare_input_copy(
+        source,
+        runtime_root=tmp_path / '.runtime',
+    )
+
+    payload = load_columnar_json(str(normalized))
+    assert payload['商品id'] == ['one', 'two']
+    assert payload['产品描述'][0] == 'line one\nline two'
+    assert payload['变种图片链接'] == [[], []]
+    assert warnings
+    assert source.read_bytes() == original
 
 
 def test_load_rejects_flat_image_column(tmp_path):

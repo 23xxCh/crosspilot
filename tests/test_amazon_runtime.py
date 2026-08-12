@@ -226,6 +226,100 @@ def test_delivery_writes_pending_review_without_overwriting_latest(
     assert formal.read_text(encoding="utf-8") == "old-formal"
 
 
+def test_unattended_delivery_isolates_bad_row_and_publishes_good_rows(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    output_root = tmp_path / "02_处理结果"
+    monkeypatch.setattr(delivery, "OUTPUT_ROOT", output_root)
+    monkeypatch.setattr(delivery, "RUNTIME_ROOT", tmp_path / ".runtime")
+    monkeypatch.setattr(delivery, "LATEST_DIR", output_root / "最新")
+    monkeypatch.setattr(delivery, "ARCHIVE_DIR", output_root / "归档")
+    captured = {}
+
+    def fake_review(input_path, output_dir, **kwargs):
+        output = Path(output_dir)
+        (output / delivery.REVIEW_NAME).write_text("review", encoding="utf-8")
+        (output / delivery.REVIEW_DATA_NAME).write_text("{}", encoding="utf-8")
+        (output / "图片").mkdir()
+        captured["quarantine"] = kwargs.get("quarantine_products") or []
+        return {"products": 2}
+
+    monkeypatch.setattr(delivery, "export_review", fake_review)
+    good = {
+        "id": "good",
+        "site": "US",
+        "title": "Generic Stainless Steel Door Hinge Repair Kit",
+        "subtitle": "Stainless steel, direct installation, hinge repair",
+        "desc": (
+            "Stainless steel door hinge repair kit for worn door hinge "
+            "mounting points."
+        ),
+        "main_img": "https://img/good.jpg",
+        "extra_imgs": [],
+        "var_imgs": [],
+        "bullets": [
+            "Stainless steel door hinge repair plate for worn mounting points",
+            "Door hinge repair kit aligns with existing hinge screw holes",
+            "Steel door hinge bracket reinforces damaged mounting locations",
+            "Door hinge repair plate installs with common hand tools",
+            "Door hinge repair package includes one steel reinforcement plate",
+        ],
+        "keywords": (
+            "door hinge repair, hinge reinforcement plate, steel hinge bracket, "
+            "door repair hardware, hinge mounting plate, cabinet hinge repair, "
+            "furniture repair plate, hinge screw support, metal hinge kit, "
+            "replacement hinge bracket"
+        ),
+        "_image_assessments": [{
+            "role": "main",
+            "url": "https://img/good.jpg",
+            "assessment": {"status": "safe"},
+            "text_assessment": normalize_main_text_assessment({
+                "status": "safe",
+                "reasons": [],
+                "placement": "none",
+                "detected_text": [],
+                "confidence": 1.0,
+                "evidence": "No visible text.",
+            }),
+        }],
+    }
+    bad = {
+        **good,
+        "id": "bad",
+        "main_img": "https://img/bad.jpg",
+        "subtitle": "",
+        "_main_selection_pending": True,
+        "_image_assessments": [],
+    }
+    context = _context(tmp_path)
+    context.data = [good, bad]
+    context.runtime_metrics["unattended"] = True
+    context.runtime_metrics["marketplaces"] = {"input_by_site": {"US": 2}}
+
+    result = delivery.deliver(context, problem_product_ids=[])
+
+    assert result.published is True
+    assert result.pending_product_ids == ("bad",)
+    assert result.isolated_product_ids == ("bad",)
+    assert result.exception_path is not None
+    exceptions = json.loads(result.exception_path.read_text(encoding="utf-8"))
+    assert [item["product_id"] for item in exceptions["items"]] == ["bad"]
+    payload = json.loads(result.output_path.read_text(encoding="utf-8"))
+    assert payload["商品id"] == ["good"]
+    assert payload["有问题的产品id"] == []
+    assert [item["product_id"] for item in captured["quarantine"]] == ["bad"]
+    status = json.loads(
+        (result.output_path.parent / delivery.STATUS_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert status["status"] == "published_with_warnings"
+    assert status["pending_product_ids"] == ["bad"]
+    assert status["isolated_product_ids"] == ["bad"]
+
+
 def test_publish_replaces_files_when_latest_directory_is_open(
     tmp_path,
     monkeypatch,
@@ -237,6 +331,10 @@ def test_publish_replaces_files_when_latest_directory_is_open(
     latest.mkdir(parents=True)
     (latest / "跨境电商自动化回填表.json").write_text(
         "old",
+        encoding="utf-8",
+    )
+    (latest / delivery.EXCEPTIONS_NAME).write_text(
+        "stale",
         encoding="utf-8",
     )
     staging = runtime_root / "staging" / "new"
@@ -265,6 +363,7 @@ def test_publish_replaces_files_when_latest_directory_is_open(
         encoding="utf-8"
     ) == "new"
     assert (latest / "图片" / "one.jpg").read_bytes() == b"image"
+    assert not (latest / delivery.EXCEPTIONS_NAME).exists()
     assert not staging.exists()
 
 

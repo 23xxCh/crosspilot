@@ -80,7 +80,7 @@ def get_provider() -> CompositeProvider:
                 raise ValueError(
                     "以下模型线路未配置 API 密钥: "
                     + ", ".join(missing)
-                    + "。请双击 03_配置管理.bat。"
+                    + "。请双击 00_常用入口\\03_配置与模型.bat。"
                 )
             _provider = CompositeProvider(_KEYS)
         return _provider

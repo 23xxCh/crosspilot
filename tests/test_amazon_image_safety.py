@@ -5,6 +5,7 @@ import json
 import pytest
 
 from amazon_processor.images.risk import (
+    image_action,
     normalize_image_assessment,
     normalize_main_text_assessment,
     parse_image_assessment_batch_response,
@@ -135,6 +136,8 @@ class StructuredProvider:
         self.gen_calls: list[tuple[str, bool, int]] = []
         self.gen_contexts: list[str] = []
         self.gen_reference_free: list[bool] = []
+        self.gen_routes: list[str | None] = []
+        self.gen_prompt_overrides: list[str | None] = []
 
     def assess_image(
         self,
@@ -161,11 +164,97 @@ class StructuredProvider:
         context: str = "",
         route_offset: int = 0,
         reference_free: bool = False,
+        image_route: str | None = None,
+        prompt_override: str | None = None,
     ) -> str:
         self.gen_contexts.append(context)
         self.gen_reference_free.append(reference_free)
+        self.gen_routes.append(image_route)
+        self.gen_prompt_overrides.append(prompt_override)
         self.gen_calls.append((url, is_variant, route_offset))
         return self.generated.get(url, "")
+
+
+def test_translation_takes_precedence_over_brand_removal() -> None:
+    value = assessment(
+        "risk",
+        reasons=[
+            "brand_logo",
+            "non_english_product_text",
+            "seller_watermark",
+        ],
+    )
+
+    assert image_action(value) == "edit_translate"
+
+
+def test_generation_route_uses_target_locale_and_detected_text() -> None:
+    url = "https://img.example/english-label.jpg"
+    cache = {
+        "risk_assessments": {
+            url: assessment(
+                "safe",
+                detected_text=["ENGINE START STOP", "12 CM"],
+            ),
+        },
+    }
+
+    assert amazon_image_safety._generation_provider_route(
+        cache,
+        url,
+        "attachment|de-DE",
+    ) == "gpt"
+    assert amazon_image_safety._generation_provider_route(
+        cache,
+        url,
+        "attachment|en-US",
+    ) == "agnes"
+
+
+def test_generation_route_keeps_number_only_diagram_on_agnes() -> None:
+    url = "https://img.example/number-only.jpg"
+    cache = {
+        "risk_assessments": {
+            url: assessment("safe", detected_text=["1", "2", "3"]),
+        },
+    }
+
+    assert amazon_image_safety._generation_provider_route(
+        cache,
+        url,
+        "attachment|fr-FR",
+    ) == "agnes"
+
+
+def test_localized_main_prompt_translates_product_text_instead_of_removing(
+    monkeypatch,
+) -> None:
+    url = "https://img.example/main-with-feature-text.jpg"
+    cache = {
+        "risk_assessments": {
+            url: assessment(
+                "risk",
+                reasons=["non_product_text"],
+                detected_text=["360 Rotation"],
+            ),
+        },
+        "main_text_assessments": {},
+    }
+    monkeypatch.setattr(
+        amazon_image_safety,
+        "_image_processing_mode",
+        lambda: "regenerate_all_localized",
+    )
+
+    context = amazon_image_safety._removal_context(
+        cache,
+        url,
+        kind="main|de",
+    )
+
+    assert "all visible text to remove" not in context
+    assert "product information text to translate" in context
+    assert "Do not delete neutral functional feature labels" in context
 
 
 def run_gate(
@@ -417,6 +506,138 @@ def test_select_existing_records_pending_when_no_clean_main(
         main,
         text_attachment,
     }
+
+
+def test_regenerate_all_localized_rebuilds_every_role_and_reselects_main(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    main = "https://img.example/localized-main.jpg"
+    attachment = "https://img.example/localized-attachment.jpg"
+    variant = "https://img.example/localized-variant.jpg"
+    generated = {
+        main: "https://generated.example/de-main.jpg",
+        attachment: "https://generated.example/de-attachment.jpg",
+        variant: "https://generated.example/de-variant.jpg",
+    }
+    provider = StructuredProvider(
+        {
+            main: assessment("safe"),
+            attachment: assessment("risk", reasons=["non_english_product_text"]),
+            variant: assessment("risk", reasons=["brand_logo"]),
+        },
+        generated=generated,
+    )
+    rows = [{
+        "id": "localized-product",
+        "site": "DE",
+        "title": "Generic Mounting Kit",
+        "main_img": main,
+        "extra_imgs": [attachment],
+        "var_imgs": [variant],
+        "var_img": variant,
+    }]
+
+    result, metrics = run_gate(
+        rows,
+        provider,
+        tmp_path,
+        monkeypatch,
+        mode="regenerate_all_localized",
+    )
+
+    assert result[0]["main_img"] == generated[main]
+    assert result[0]["extra_imgs"] == [generated[attachment]]
+    assert result[0]["var_imgs"] == [generated[variant]]
+    assert len(provider.gen_calls) == 3
+    calls_by_url = {
+        call[0]: (route, override, context)
+        for call, route, override, context in zip(
+            provider.gen_calls,
+            provider.gen_routes,
+            provider.gen_prompt_overrides,
+            provider.gen_contexts,
+        )
+    }
+    assert calls_by_url[main][0:2] == ("agnes", None)
+    assert calls_by_url[attachment][0] == "gpt"
+    assert calls_by_url[attachment][1] == calls_by_url[attachment][2]
+    assert calls_by_url[variant][0:2] == ("agnes", None)
+    assert all("TARGET LANGUAGE: 德语" in context for context in provider.gen_contexts)
+    assert metrics["image_safety_gate"]["processing_mode"] == (
+        "regenerate_all_localized"
+    )
+    assert metrics["image_safety_gate"]["attachment_deleted"] == 0
+
+
+def test_regenerate_all_localized_deduplicates_same_language_sites(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    main = "https://img.example/shared-main.jpg"
+    generated = "https://generated.example/shared-main.jpg"
+    provider = StructuredProvider(
+        {main: assessment("safe")},
+        generated={main: generated},
+    )
+    rows = [
+        {
+            "id": site,
+            "site": site,
+            "title": "Shared product",
+            "main_img": main,
+            "extra_imgs": [],
+            "var_imgs": [],
+            "var_img": "",
+        }
+        for site in ("US", "UK", "MX", "ES")
+    ]
+
+    result, _metrics = run_gate(
+        rows,
+        provider,
+        tmp_path,
+        monkeypatch,
+        mode="regenerate_all_localized",
+    )
+
+    assert len(provider.gen_calls) == 2
+    assert [row["main_img"] for row in result] == [generated] * 4
+
+
+def test_regenerate_all_localized_blocks_without_deleting_slots(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    main = "https://img.example/block-main.jpg"
+    attachment = "https://img.example/block-attachment.jpg"
+    provider = StructuredProvider(
+        {main: assessment("safe"), attachment: assessment("safe")},
+        generated={main: "https://generated.example/block-main.jpg"},
+    )
+    rows = [{
+        "id": "blocked-product",
+        "site": "US",
+        "title": "Product",
+        "main_img": main,
+        "extra_imgs": [attachment],
+        "var_imgs": [],
+    }]
+    original = [dict(rows[0])]
+    monkeypatch.setattr(remediation, "validate_image_url", lambda _url: (True, ""))
+    monkeypatch.setattr(
+        amazon_image_safety,
+        "_image_processing_mode",
+        lambda: "regenerate_all_localized",
+    )
+    with pytest.raises(RuntimeError, match="正式表未覆盖"):
+        amazon_image_safety.run_structured_image_safety_gate(
+            rows,
+            str(tmp_path / "cache.json"),
+            quality_issues=[],
+            provider_getter=lambda: provider,
+        )
+    assert rows == original
 
 
 def test_multisite_rows_review_each_unique_image_only_once(
@@ -1356,8 +1577,10 @@ def test_generation_resumes_after_temporary_circuit(
             context="",
             route_offset=0,
             reference_free=False,
+            image_route=None,
+            prompt_override=None,
         ):
-            del context, reference_free
+            del context, reference_free, image_route, prompt_override
             self.gen_calls.append((url, is_variant, route_offset))
             self.attempts += 1
             if self.attempts == 1:
@@ -1410,8 +1633,11 @@ def test_limited_precise_routes_stop_before_gpt_quota_path(
             context="",
             route_offset=0,
             reference_free=False,
+            image_route=None,
+            prompt_override=None,
         ):
-            del context, reference_free
+            del context, reference_free, prompt_override
+            assert image_route == "agnes"
             self.gen_calls.append((url, is_variant, route_offset))
             if route_offset < 2:
                 raise RuntimeError("agnes unavailable")

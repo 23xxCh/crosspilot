@@ -281,6 +281,61 @@ def test_explicit_image_route_offset_attempts_only_one_provider():
     assert fallback.call_image_gen.call_count == 1
 
 
+def test_explicit_image_provider_family_never_crosses_routes():
+    from amazon_processor.providers import CompositeProvider
+    from amazon_processor.providers.agnes import AgnesProvider
+    from amazon_processor.providers.gpt_image import GPTImageProvider
+
+    provider = CompositeProvider({
+        "text_provider": "deepseek",
+        "vision_provider": "agnes",
+        "image_gen_provider": "agnes",
+        "deepseek_key": "test-deepseek",
+        "agnes_key": "test-agnes",
+        "gpt_image_key": "test-gpt",
+        "agnes_image_fallback_model": "agnes-image-2.0-flash",
+    })
+    agnes_providers = [
+        item
+        for item in [
+            provider._providers["image_gen"],
+            *provider._image_gen_fallbacks,
+        ]
+        if isinstance(item, AgnesProvider)
+    ]
+    gpt_provider = next(
+        item
+        for item in provider._image_gen_fallbacks
+        if isinstance(item, GPTImageProvider)
+    )
+    for index, item in enumerate(agnes_providers):
+        item.call_image_gen = Mock(
+            return_value=f"https://generated.example/agnes-{index}.png"
+        )
+    gpt_provider.call_image_gen = Mock(
+        return_value="https://generated.example/gpt.png"
+    )
+
+    assert provider.call_image_gen(
+        "https://source.example/translate.png",
+        image_route="gpt",
+        route_offset=0,
+        prompt_override="translate exactly",
+    ) == "https://generated.example/gpt.png"
+    assert provider.call_image_gen(
+        "https://source.example/remove.png",
+        image_route="agnes",
+        route_offset=1,
+    ) == "https://generated.example/agnes-1.png"
+
+    gpt_provider.call_image_gen.assert_called_once()
+    assert gpt_provider.call_image_gen.call_args.kwargs["prompt_override"] == (
+        "translate exactly"
+    )
+    agnes_providers[0].call_image_gen.assert_not_called()
+    agnes_providers[1].call_image_gen.assert_called_once()
+
+
 def test_response_format_error_does_not_open_composite_circuit():
     from amazon_processor.providers import (
         CompositeProvider,
@@ -355,6 +410,28 @@ def test_gpt_image_generation_keeps_long_repair_context():
     payload = provider._session.post.call_args.kwargs["json"]
     assert "LOCAL REPAIR RULE" in payload["prompt"]
     assert "VEHICLE EMBLEM RULE" in payload["prompt"]
+
+
+def test_gpt_image_generation_uses_exact_prompt_override():
+    from amazon_processor.providers.gpt_image import GPTImageProvider
+
+    response = Mock(ok=True, status_code=200, text="ok")
+    response.json.return_value = {
+        "data": [{"url": "https://generated.example/gpt.png"}],
+    }
+    provider = GPTImageProvider("test-key")
+    provider._session = Mock()
+    provider._session.post.return_value = response
+
+    provider.call_image_gen(
+        "https://img.example/source.jpg",
+        prompt_override="Translate every Chinese label into exact English.",
+    )
+
+    payload = provider._session.post.call_args.kwargs["json"]
+    assert payload["prompt"] == (
+        "Translate every Chinese label into exact English."
+    )
 
 
 def test_provider_interface_exports_implementations():

@@ -14,14 +14,14 @@ from amazon_processor.text.subtitles import (
 from amazon_processor.policy import enforce_prohibited_listing_terms
 
 
-def test_brand_title_uses_generic_for_format_and_75_char_limit() -> None:
+def test_brand_title_uses_generic_for_format_and_subtitle_display_limit() -> None:
     result = normalize_amazon_title(
         "Toyota Camry Windshield Washer Spray Nozzle Replacement Kit 2 Pack"
     )
 
     assert result.startswith("Generic ")
     assert " for Toyota Camry" in result
-    assert len(result) <= 75
+    assert len(result) < 75
     assert normalize_amazon_title(result) == result
 
 
@@ -150,7 +150,7 @@ def test_subtitle_rule_fills_short_phrase_from_product_details() -> None:
     assert "," in row["subtitle"]
 
 
-def test_subtitle_is_empty_when_title_reaches_display_limit() -> None:
+def test_title_at_display_limit_is_compacted_and_gets_subtitle() -> None:
     row = {
         "title": "A" * 75,
         "desc": "Material: Stainless steel",
@@ -159,7 +159,34 @@ def test_subtitle_is_empty_when_title_reaches_display_limit() -> None:
 
     normalize_subtitle_for_row(row)
 
-    assert row["subtitle"] == ""
+    assert len(row["title"]) < 75
+    assert row["subtitle"] == "Stainless steel material"
+
+
+def test_localized_subtitle_fills_from_description_when_model_returns_empty() -> None:
+    row = {
+        "site": "IT",
+        "title": "Cornice in fibra di carbonio per pulsante start-stop auto",
+        "subtitle": "",
+        "desc": (
+            "Cornice decorativa per il pulsante di avvio del motore.\n\n"
+            "Materiale: lega metallica\n"
+            "Colore: fibra di carbonio\n"
+            "Diametro interno: 3 cm\n"
+            "Diametro esterno: 3,8 cm\n"
+            "Dimensioni: 4 cm x 5 cm"
+        ),
+        "bullets": [],
+        "keywords": "cornice pulsante, protezione interni auto",
+    }
+
+    normalize_subtitle_for_row(row)
+
+    assert row["subtitle"]
+    assert len(row["subtitle"]) <= SUBTITLE_MAX_LENGTH
+    assert "lega metallica" in row["subtitle"]
+    assert "3,8 cm" in row["subtitle"]
+    assert ":" not in row["subtitle"]
 
 
 def test_build_subtitle_rejects_special_symbols_and_title_duplicates() -> None:

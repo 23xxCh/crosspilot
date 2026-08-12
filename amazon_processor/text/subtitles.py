@@ -20,7 +20,11 @@ from ..quality import (
     term_tokens,
     trim_words,
 )
-from .locale import market_for_row, sanitize_localized_subtitle
+from .locale import (
+    market_for_row,
+    normalize_localized_title,
+    sanitize_localized_subtitle,
+)
 
 
 TITLE_DISPLAY_LIMIT = 75
@@ -37,6 +41,8 @@ _FORBIDDEN_RE = re.compile(
 _LABEL_RE = re.compile(r"^\s*([A-Za-z][A-Za-z /_-]{1,35})\s*[:：]\s*(.+)$")
 _ALLOWED_CHARS_RE = re.compile(r"[^A-Za-z0-9 ,]")
 _TRAILING_PUNCT_RE = re.compile(r"[\s,.;:!?]+$")
+_LOCALIZED_SPEC_RE = re.compile(r"^\s*([^:：\n]{1,40})\s*[:：]\s*(.+)$")
+_LOCALIZED_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
 _NOISE_WORD_RE = re.compile(
     r"\b("
     r"yes|number|product|applicable|style|type|item|items|"
@@ -214,8 +220,70 @@ def build_subtitle(title: str, candidates: list[str]) -> str:
     return ", ".join(selected)
 
 
+def _localized_tokens(value: object) -> set[str]:
+    return {
+        token.casefold()
+        for token in _LOCALIZED_WORD_RE.findall(str(value or ""))
+        if len(token) > 1 and not token.isdigit()
+    }
+
+
+def _localized_subtitle_candidates(row: dict) -> list[str]:
+    """Collect already-localized facts without translating or inventing them."""
+    candidates: list[str] = []
+    description = str(row.get("desc") or "")
+    for line in description.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        match = _LOCALIZED_SPEC_RE.match(line)
+        if not match:
+            continue
+        label = re.sub(r"\s+", " ", match.group(1)).strip()
+        value = re.sub(r"\s+", " ", match.group(2)).strip()
+        if label and value:
+            candidates.append(f"{label} {value}")
+    candidates.extend(split_keywords(row.get("keywords") or ""))
+    for bullet in list(row.get("bullets") or [])[:5]:
+        text = str(bullet or "").strip()
+        if text and len(text.split()) <= 7:
+            candidates.append(text)
+    return candidates
+
+
+def build_localized_subtitle(row: dict) -> str:
+    """Build a localized fallback when the model returned no subtitle."""
+    site = row.get("site") or "US"
+    title_tokens = _localized_tokens(row.get("title"))
+    selected: list[str] = []
+    seen: set[str] = set()
+    for raw in _localized_subtitle_candidates(row):
+        phrase = sanitize_localized_subtitle(raw, site)
+        fingerprint = phrase.casefold()
+        if (
+            not phrase
+            or fingerprint in seen
+            or len(phrase) > 55
+            or _FORBIDDEN_RE.search(phrase)
+            or has_cross_sell_contamination(phrase)
+        ):
+            continue
+        phrase_tokens = _localized_tokens(phrase)
+        if not phrase_tokens or not (phrase_tokens - title_tokens):
+            continue
+        trial = ", ".join([*selected, phrase])
+        if len(trial) > SUBTITLE_MAX_LENGTH:
+            continue
+        selected.append(phrase)
+        seen.add(fingerprint)
+        if len(selected) >= 4:
+            break
+    return sanitize_localized_subtitle(", ".join(selected), site)
+
+
 def normalize_subtitle_for_row(row: dict) -> dict:
     """Normalize or rule-fill one row's subtitle."""
+    row["title"] = normalize_localized_title(
+        row.get("title"),
+        row.get("site") or "US",
+    )
     title = str(row.get("title") or "").strip()
     before = str(row.get("subtitle") or "")
     market = market_for_row(row)
@@ -228,6 +296,8 @@ def normalize_subtitle_for_row(row: dict) -> dict:
             before,
             row.get("site") or "US",
         )
+        if not row["subtitle"]:
+            row["subtitle"] = build_localized_subtitle(row)
     else:
         row["subtitle"] = ""
         if before.strip():
@@ -273,6 +343,7 @@ def normalize_subtitles_for_rows(rows: list[dict]) -> list[dict]:
 __all__ = [
     "SUBTITLE_MAX_LENGTH",
     "TITLE_DISPLAY_LIMIT",
+    "build_localized_subtitle",
     "build_subtitle",
     "normalize_subtitle_for_row",
     "normalize_subtitles_for_rows",

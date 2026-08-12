@@ -394,10 +394,10 @@ def validate_amazon_rows(rows, extra_issues=None, row_offset=0):
             for value in [title, subtitle, description, *bullets, keywords]
         ):
             issues.append(f'{label}文案含平台违规词')
-        if not title or len(title) > 75 or META_TEXT_RE.search(title):
-            issues.append(f'{label}标题为空、超过 75 字符或疑似模型说明文本')
-        if len(title) >= 75 and subtitle:
-            issues.append(f'{label}标题达到 75 字符时副标题必须为空')
+        if not title or len(title) > 74 or META_TEXT_RE.search(title):
+            issues.append(f'{label}标题为空、未给副标题预留展示空间或疑似模型说明文本')
+        if title and not subtitle:
+            issues.append(f'{label}副标题不能为空')
         if subtitle:
             if len(subtitle) > 125:
                 issues.append(f'{label}副标题超过 125 字符')

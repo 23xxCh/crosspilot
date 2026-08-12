@@ -1,5 +1,6 @@
 """Image remediation and the fail-closed Amazon image-safety gate."""
 from __future__ import annotations
+import json
 import time
 from threading import Lock
 from typing import Any, Callable
@@ -16,6 +17,7 @@ from ..providers.support import (
     ProviderQuotaError,
 )
 from ..quality import AMAZON_IMAGE_GEN_CONCURRENCY
+from ..config.prompts import get_prompt_registry
 from .risk import safe_assess, validate_image_url
 from .cache import (
     is_current_assessment,
@@ -30,12 +32,30 @@ def _generated_image_review_mode() -> str:
 
 
 def _image_processing_mode() -> str:
+    import os
     from ..config.env import get
 
-    mode = str(get("IMAGE_PROCESSING_MODE", "select_existing")).strip().lower()
-    if mode not in {"select_existing", "generate_replacements"}:
+    mode = str(
+        os.environ.get("IMAGE_PROCESSING_MODE")
+        or get("IMAGE_PROCESSING_MODE", "select_existing")
+    ).strip().lower()
+    if mode not in {
+        "select_existing",
+        "generate_replacements",
+        "regenerate_all_localized",
+    }:
         return "select_existing"
     return mode
+
+
+def _generation_role(kind: str) -> str:
+    """Extract the image role from a cache kind with an optional locale."""
+    return str(kind or '').split('|', 1)[0].strip() or 'attachment'
+
+
+def _generation_locale(kind: str) -> str:
+    parts = str(kind or '').split('|', 1)
+    return parts[1].strip() if len(parts) == 2 else ''
 
 def cached_generation(cache: dict[str, Any], generation_version: str, kind: str, source_url: str, main_text_version: str | None=None) -> str:
     """Return only a current generated URL that passed structured review."""
@@ -59,10 +79,45 @@ def cached_generation(cache: dict[str, Any], generation_version: str, kind: str,
         return ''
     return generated
 
-def _generation_attempt_plan() -> list[tuple[int, str]]:
+def _generation_attempt_plan(
+    image_route: str | None = None,
+) -> list[tuple[int, str]]:
     from ..config.env import get_int
     limit = max(1, min(10, get_int('IMAGE_SAFETY_REGEN_LIMIT', 3)))
+    if image_route == 'gpt':
+        return [(0, 'precise') for _ in range(limit)]
+    if image_route == 'agnes':
+        return [
+            (route_offset, 'precise')
+            for route_offset in range(min(limit, 2))
+        ]
     return [(route_offset, 'precise') for route_offset in range(limit)]
+
+
+def _generation_provider_route(
+    cache: dict[str, Any],
+    source_url: str,
+    kind: str = '',
+) -> str:
+    """Use GPT for translation and Agnes for local removal/no-op edits."""
+    assessment = cache.get('risk_assessments', {}).get(source_url) or {}
+    if image_action(assessment) == 'edit_translate':
+        return 'gpt'
+    locale = _generation_locale(kind).lower()
+    detected_text = ' '.join(
+        str(value or '').strip()
+        for value in assessment.get('detected_text') or []
+    )
+    has_letters = any(character.isalpha() for character in detected_text)
+    is_english = locale == 'en' or locale.startswith('en-')
+    if locale and not is_english and has_letters:
+        return 'gpt'
+    if is_english and any(
+        character.isalpha() and not character.isascii()
+        for character in detected_text
+    ):
+        return 'gpt'
+    return 'agnes'
 
 
 def _assessment_feedback(assessment: object) -> str:
@@ -128,6 +183,8 @@ def _removal_context(
     strategy: str = 'precise',
     previous_rejection: str = '',
 ) -> str:
+    role = _generation_role(kind)
+    locale = _generation_locale(kind)
     general = cache.get('risk_assessments', {}).get(source_url) or {}
     text_review = (
         cache.get('main_text_assessments', {}).get(source_url) or {}
@@ -155,97 +212,36 @@ def _removal_context(
         or text_review.get('evidence')
         or ''
     ).strip()
-    targets = []
-    action = image_action(general)
-    if detected_text:
-        if kind == 'main':
-            targets.append(
-                'all visible text to remove: '
-                + ', '.join(repr(value) for value in detected_text)
-            )
-        elif action == 'edit_translate':
-            targets.append(
-                'non-English product information text to translate: '
-                + ', '.join(repr(value) for value in detected_text)
-            )
-        else:
-            targets.append(
-                'visible prohibited or non-English text: '
-                + ', '.join(repr(value) for value in detected_text)
-            )
-    if categories:
-        targets.append('risk elements ' + ', '.join(categories))
-    if evidence:
-        targets.append('review evidence: ' + evidence)
-    if not targets:
-        targets.append(
-            'all visible text and text-like marks'
-            if kind == 'main'
-            else 'only confirmed brand marks, logos, watermarks, seller marks, or non-English product text'
-        )
-    strategy_instruction = {
-        'precise': (
-            'REFERENCE-PRESERVING LOCAL EDIT: use the reference image as the '
-            'base image. Make the smallest possible local edit only. Do not '
-            'redesign, rebuild, recrop, recolor, replace, rearrange, or '
-            'simplify the product.'
-        ),
-    }.get(strategy, '')
-    if kind == 'main':
-        localized_instruction = (
-            'MAIN IMAGE ZERO-TEXT RULE: remove every visible letter, word, '
-            'number, dimension, model marking, specification, label, brand '
-            'name, vehicle emblem, logo, watermark, seller/store name, URL, '
-            'marketplace mark, QR code, promotional label, and pseudo-text. '
-            'Do not translate or keep existing English text. Inpaint only the '
-            'affected local areas with matching color, texture, and material. '
-            'The output must contain no visible text or text-like marks. Do '
-            'not create new labels, fake logos, new text, people, hands, '
-            'vehicles, or extra components.'
-        )
+    localized_mode = (
+        _image_processing_mode() == 'regenerate_all_localized'
+    )
+    if role == 'main' and not localized_mode:
+        edit_policy = 'main_zero_text'
+    elif role == 'main':
+        edit_policy = 'main_localized'
     else:
-        localized_instruction = (
-            'EDIT RULES: remove brand names, vehicle emblems, logos, '
-            'watermarks, seller/store names, URLs, marketplace marks, and '
-            'promotional labels. Translate Chinese or other non-English '
-            'product information, specs, dimensions, controls, and '
-            'installation labels into natural English. Keep existing English '
-            'product information unchanged. Fill removed logo or watermark '
-            'areas with matching local color, texture, and material; use a '
-            'white patch only when the original local surface is white. Do '
-            'not create pseudo-text, new labels, fake logos, new model '
-            'numbers, new brands, people, hands, vehicles, or extra '
-            'components.'
-        )
+        edit_policy = 'attachment_localized'
     title_text = str(listing_title or '').strip()[:120]
-    if strategy in {'rebuild', 'minimal', 'fallback'}:
-        standalone = _standalone_product_title(title_text)
-        title_instruction = (
-            f'STANDALONE SOLD ITEM: {standalone}. '
-            'Words such as car or vehicle indicate compatibility only; '
-            'never draw the compatible vehicle.'
-            if standalone else ''
-        )
-    else:
-        title_instruction = (
-            f'SOLD ITEM TITLE: {title_text}.'
-            if title_text else ''
-        )
-    parts = [
-        title_instruction,
-        strategy_instruction,
-        'EDIT TARGETS: ' + '; '.join(targets) + '.',
-        (
-            'The previous candidate was rejected for '
-            + str(previous_rejection).strip()
-            + '. Do not repeat it.'
-            if str(previous_rejection).strip()
-            else ''
+    standalone = (
+        _standalone_product_title(title_text)
+        if strategy in {'rebuild', 'minimal', 'fallback'}
+        else ''
+    )
+    return get_prompt_registry().render(
+        'images.edit_request',
+        listing_title=title_text,
+        standalone_item=standalone,
+        image_role=role,
+        edit_policy=edit_policy,
+        edit_strategy=strategy,
+        target_locale=locale or 'not specified',
+        detected_text_json=json.dumps(
+            detected_text[:12], ensure_ascii=False
         ),
-        'Preserve product geometry, count, layout, angle, background, color, material, and texture.',
-        localized_instruction,
-    ]
-    return ' '.join(part for part in parts if part)[:1400]
+        risk_categories_json=json.dumps(categories, ensure_ascii=False),
+        review_evidence=evidence,
+        previous_rejection=str(previous_rejection).strip(),
+    )
 
 
 def _is_transient_generation_failure(record: object) -> bool:
@@ -277,13 +273,15 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
     targets_to_generate = [item for item in targets if not cached_generation(cache, generation_version, item[1], item[0], main_text_version)]
     if not targets_to_generate:
         return targets_to_generate
-    generation_plan = _generation_attempt_plan()
     listing_contexts = listing_contexts or {}
-    disabled_routes: set[int] = set()
+    disabled_routes: set[tuple[str, int]] = set()
     disabled_routes_lock = Lock()
 
     def generate_one(item: tuple[str, str]) -> dict[str, Any]:
         source_url, kind = item
+        role = _generation_role(kind)
+        provider_route = _generation_provider_route(cache, source_url, kind)
+        generation_plan = _generation_attempt_plan(provider_route)
         provider = provider_getter()
         last_reason = 'generation_failed'
         last_assessment = unknown_image_assessment('no generated candidate')
@@ -296,19 +294,23 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
         for attempt_index, (route_offset, strategy) in enumerate(
             generation_plan
         ):
-            reference_free = kind == 'main' and strategy in {
+            reference_free = role == 'main' and strategy in {
                 'rebuild',
                 'minimal',
                 'fallback',
             }
             with disabled_routes_lock:
-                route_disabled = route_offset in disabled_routes
+                route_disabled = (
+                    provider_route,
+                    route_offset,
+                ) in disabled_routes
             if route_disabled:
                 attempts.append({
                     'attempt_index': attempt_index,
                     'route_offset': route_offset,
                     'strategy': strategy,
                     'reference_free': reference_free,
+                    'provider_route': provider_route,
                     'error': 'route_disabled_after_quota',
                 })
                 continue
@@ -321,25 +323,31 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
                 previous_rejection=previous_rejection,
             )
             try:
+                call_kwargs: dict[str, Any] = {}
+                if provider_route == 'gpt':
+                    call_kwargs['prompt_override'] = context
                 generated = str(provider.call_image_gen(
                     source_url,
-                    is_variant=kind in {'variant', 'attachment'},
+                    is_variant=role in {'variant', 'attachment'},
                     context=context,
                     route_offset=route_offset,
                     reference_free=reference_free,
+                    image_route=provider_route,
+                    **call_kwargs,
                 ) or '')
             except ProviderCircuitOpenError:
                 raise
             except ProviderQuotaError as exc:
                 if str(getattr(exc, 'provider', '')).lower() == 'gpt':
                     with disabled_routes_lock:
-                        disabled_routes.add(route_offset)
+                        disabled_routes.add((provider_route, route_offset))
                     attempts.append({
                         'attempt_index': attempt_index,
-                    'route_offset': route_offset,
-                    'strategy': strategy,
-                    'reference_free': reference_free,
-                    'error': 'ProviderQuotaError:gpt',
+                        'route_offset': route_offset,
+                        'strategy': strategy,
+                        'reference_free': reference_free,
+                        'provider_route': provider_route,
+                        'error': 'ProviderQuotaError:gpt',
                     })
                     if not candidates_reviewed:
                         last_reason = 'ProviderQuotaError:gpt'
@@ -352,6 +360,7 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
                     'route_offset': route_offset,
                     'strategy': strategy,
                     'reference_free': reference_free,
+                    'provider_route': provider_route,
                     'error': last_reason,
                 })
                 continue
@@ -363,6 +372,7 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
                     'route_offset': route_offset,
                     'strategy': strategy,
                     'reference_free': reference_free,
+                    'provider_route': provider_route,
                     'candidate_url': generated,
                     'error': reason,
                 })
@@ -372,7 +382,7 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
                     "generated image accepted for human review without "
                     "machine recheck"
                 )
-                if kind == 'main':
+                if role == 'main':
                     last_text_assessment = unknown_main_text_assessment(
                         "generated main image accepted for human review "
                         "without machine text recheck"
@@ -382,6 +392,7 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
                     'route_offset': route_offset,
                     'strategy': strategy,
                     'reference_free': reference_free,
+                    'provider_route': provider_route,
                     'candidate_url': generated,
                     'accepted_without_machine_review': True,
                 })
@@ -389,11 +400,12 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
                     'url': generated,
                     'assessment': last_assessment,
                     'text_assessment': (
-                        last_text_assessment if kind == 'main' else None
+                        last_text_assessment if role == 'main' else None
                     ),
                     'strategy': strategy,
                     'reference_free': reference_free,
                     'route_offset': route_offset,
+                    'provider_route': provider_route,
                     'candidates_reviewed': 0,
                     'attempts': attempts,
                     'accepted_without_machine_review': True,
@@ -414,6 +426,7 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
                     'route_offset': route_offset,
                     'strategy': strategy,
                     'reference_free': reference_free,
+                    'provider_route': provider_route,
                     'candidate_url': generated,
                     'reason': last_reason,
                     'risk_assessment': last_assessment,
@@ -422,12 +435,13 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
             return {
                 'url': generated,
                 'assessment': last_assessment,
-                'text_assessment': (
-                    last_text_assessment if kind == 'main' else None
+                    'text_assessment': (
+                    last_text_assessment if role == 'main' else None
                 ),
                 'strategy': strategy,
                 'reference_free': reference_free,
                 'route_offset': route_offset,
+                'provider_route': provider_route,
                 'candidates_reviewed': candidates_reviewed,
                 'attempts': attempts,
             }
@@ -439,21 +453,24 @@ def generate_safe_replacements(targets: list[tuple[str, str]], *, cache: dict[st
             ),
             'failure_reason': last_reason,
             'candidates_reviewed': candidates_reviewed,
+            'provider_route': provider_route,
             'attempts': attempts,
         }
 
     def generate_done(item: tuple[str, str], result: object) -> None:
         source_url, kind = item
+        role = _generation_role(kind)
+        locale = _generation_locale(kind)
         key = f'{kind}:{source_url}'
         if isinstance(result, Exception) or not isinstance(result, dict):
             result = {'url': '', 'assessment': unknown_image_assessment('generation worker failed'), 'failure_reason': 'generation_worker_failed'}
         generated = str(result.get('url') or '')
         if generated:
             cache['gen_results'][key] = generated
-            cache['gen_meta'][key] = {'kind': kind, 'source_url': source_url, 'prompt_version': generation_version, 'main_text_prompt_version': main_text_version if kind == 'main' else '', 'risk_assessment': result['assessment'], 'text_assessment': result.get('text_assessment'), 'strategy': str(result.get('strategy') or 'precise'), 'reference_free': bool(result.get('reference_free')), 'route_offset': int(result.get('route_offset') or 0), 'candidates_reviewed': int(result.get('candidates_reviewed') or 0), 'attempts': list(result.get('attempts') or []), 'accepted_without_machine_review': bool(result.get('accepted_without_machine_review')), 'ts': int(time.time())}
+            cache['gen_meta'][key] = {'kind': kind, 'role': role, 'locale': locale, 'source_url': source_url, 'prompt_version': generation_version, 'main_text_prompt_version': main_text_version if role == 'main' else '', 'risk_assessment': result['assessment'], 'text_assessment': result.get('text_assessment'), 'strategy': str(result.get('strategy') or 'precise'), 'reference_free': bool(result.get('reference_free')), 'route_offset': int(result.get('route_offset') or 0), 'provider_route': str(result.get('provider_route') or ''), 'candidates_reviewed': int(result.get('candidates_reviewed') or 0), 'attempts': list(result.get('attempts') or []), 'accepted_without_machine_review': bool(result.get('accepted_without_machine_review')), 'ts': int(time.time())}
             cache['gen_failures'].pop(key, None)
         else:
-            cache['gen_failures'][key] = {'kind': kind, 'source_url': source_url, 'prompt_version': generation_version, 'main_text_prompt_version': main_text_version if kind == 'main' else '', 'reason': str(result.get('failure_reason') or 'generation_failed')[:120], 'risk_assessment': result.get('assessment'), 'text_assessment': result.get('text_assessment'), 'candidates_reviewed': int(result.get('candidates_reviewed') or 0), 'attempts': list(result.get('attempts') or []), 'ts': int(time.time())}
+            cache['gen_failures'][key] = {'kind': kind, 'role': role, 'locale': locale, 'source_url': source_url, 'prompt_version': generation_version, 'main_text_prompt_version': main_text_version if role == 'main' else '', 'reason': str(result.get('failure_reason') or 'generation_failed')[:120], 'risk_assessment': result.get('assessment'), 'text_assessment': result.get('text_assessment'), 'provider_route': str(result.get('provider_route') or ''), 'candidates_reviewed': int(result.get('candidates_reviewed') or 0), 'attempts': list(result.get('attempts') or []), 'ts': int(time.time())}
         save_cache(cache_path, cache)
     print(f'风险图片局部编辑: {len(targets_to_generate)} 张...', flush=True)
     from ..config.env import get_int
@@ -998,6 +1015,292 @@ def _select_existing_images(
     save_cache(cache_path, cache)
     return list(data)
 
+
+def _localized_image_context(row: dict[str, Any]) -> str:
+    """Build a compact locale-aware context for the image editor."""
+    from ..markets import get_market
+
+    market = get_market(row.get('site') or 'US')
+    title = str(row.get('title') or row.get('_source_title') or '').strip()
+    return (
+        f'TARGET MARKET: {market.code}; COUNTRY: {market.country}; '
+        f'TARGET LANGUAGE: {market.language}; LOCALE: {market.locale}. '
+        'Translate product information inside the image only into this '
+        'language. Remove prohibited branding and overlays. '
+        f'SOLD PRODUCT TITLE: {title[:160]}'
+    )
+
+
+def _main_quality_rank(value: object) -> int:
+    if not isinstance(value, dict):
+        return 0
+    explicit = {
+        'preferred': 3,
+        'acceptable': 2,
+        'fallback': 1,
+    }.get(str(value.get('main_image_quality') or '').strip(), 0)
+    if explicit:
+        return explicit
+    evidence = str(value.get('evidence') or '').lower()
+    if any(token in evidence for token in ('white background', 'isolated product', 'single product')):
+        return 3
+    if any(token in evidence for token in ('collage', 'lifestyle', 'installation scene', 'dimension diagram')):
+        return 1
+    return 0
+
+
+def _regenerate_all_localized_images(
+    data: list[dict[str, Any]],
+    *,
+    usage: dict[str, list[dict[str, Any]]],
+    row_by_id: dict[str, dict[str, Any]],
+    assessments: dict[str, dict[str, Any]],
+    main_text_assessments: dict[str, dict[str, Any]],
+    cache: dict[str, Any],
+    cache_path: str | None,
+    provider_getter: Callable[[], object],
+    concurrency_stats: dict[str, Any],
+    runtime_metrics: dict[str, Any],
+    quality_issues: list[str],
+    generation_version: str,
+) -> list[dict[str, Any]]:
+    """Regenerate every source image once per role and target language."""
+    from ..markets import get_market
+
+    target_set: set[tuple[str, str]] = set()
+    listing_contexts: dict[tuple[str, str], str] = {}
+    for product_id, row in row_by_id.items():
+        market = get_market(row.get('site') or 'US')
+        locale = market.language_code.lower()
+        context = _localized_image_context(row)
+        for url, role, _position in row_image_roles(row):
+            kind = f'{role}|{locale}'
+            target_set.add((url, kind))
+            listing_contexts.setdefault((url, kind), context)
+    targets = sorted(target_set, key=lambda item: (item[0], item[1]))
+    generate_safe_replacements(
+        targets,
+        cache=cache,
+        cache_path=cache_path,
+        generation_version=generation_version,
+        main_text_version='',
+        provider_getter=provider_getter,
+        concurrency_stats=concurrency_stats,
+        listing_contexts=listing_contexts,
+    )
+    # The caller supplies the current signature through runtime_metrics only
+    # for reporting; generation lookup uses the cache's own current version.
+    generation_version = str(cache.get('gen_prompt_version') or '')
+    blockers: list[dict[str, Any]] = []
+    generated_by_target: dict[tuple[str, str], str] = {}
+    for source_url, kind in targets:
+        replacement = cached_generation(
+            cache,
+            generation_version,
+            kind,
+            source_url,
+            '',
+        )
+        if replacement:
+            generated_by_target[(source_url, kind)] = replacement
+            continue
+        role = _generation_role(kind)
+        blockers.extend(
+            {
+                'product_id': product_id,
+                'role': role,
+                'url': source_url,
+                'locale': _generation_locale(kind),
+                'message': '全图本地化编辑失败；已停止发布，正式表不覆盖',
+                'generation_failure': cache.get('gen_failures', {}).get(
+                    f'{kind}:{source_url}'
+                ),
+            }
+            for product_id, row in row_by_id.items()
+            if any(
+                value == source_url and item_role == role
+                for value, item_role, _ in row_image_roles(row)
+            )
+            and get_market(row.get('site') or 'US').language_code.lower()
+            == _generation_locale(kind)
+        )
+    if blockers:
+        runtime_metrics['image_publish_blockers'] = blockers
+        quality_issues.append(f'图片本地化编辑失败 {len(blockers)} 项，已停止发布')
+        save_cache(cache_path, cache)
+        sample = ', '.join(
+            f"{item['product_id']}:{item['role']}"
+            for item in blockers[:5]
+        )
+        raise RuntimeError(
+            f'图片本地化编辑失败，已停止发布，正式表未覆盖：'
+            f'{len(blockers)} 项（{sample}）'
+        )
+
+    staged_rows: dict[str, dict[str, Any]] = {}
+    for product_id, row in row_by_id.items():
+        market = get_market(row.get('site') or 'US')
+        locale = market.language_code.lower()
+        source_products = [
+            str(row.get('main_img') or '').strip(),
+            *[
+                str(value).strip()
+                for value in row.get('extra_imgs') or []
+                if str(value).strip()
+            ],
+        ]
+        generated_products = [
+            generated_by_target[(url, f"{'main' if index == 0 else 'attachment'}|{locale}")]
+            for index, url in enumerate(source_products)
+        ]
+        ranked = sorted(
+            enumerate(generated_products),
+            key=lambda item: (
+                -_main_quality_rank(
+                    main_text_assessments.get(source_products[item[0]])
+                    or assessments.get(source_products[item[0]])
+                    or {}
+                ),
+                item[0],
+            ),
+        )
+        selected_index = ranked[0][0]
+        variants = [
+            str(value).strip()
+            for value in row.get('var_imgs') or []
+            if str(value).strip()
+        ]
+        generated_variants = [
+            generated_by_target[(url, f'variant|{locale}')]
+            for url in variants
+        ]
+        staged = dict(row)
+        staged['main_img'] = generated_products[selected_index]
+        staged['extra_imgs'] = [
+            value
+            for index, value in enumerate(generated_products)
+            if index != selected_index
+        ]
+        staged['var_imgs'] = generated_variants
+        staged['var_img'] = generated_variants[0] if generated_variants else ''
+        records: list[dict[str, Any]] = []
+        for index, source_url in enumerate(source_products):
+            role = 'main' if index == 0 else 'attachment'
+            kind = f'{role}|{locale}'
+            replacement = generated_by_target[(source_url, kind)]
+            meta = cache.get('gen_meta', {}).get(f'{kind}:{source_url}') or {}
+            record = assessment_record(
+                url=replacement,
+                role='main' if index == selected_index else 'attachment',
+                assessment=meta.get('risk_assessment') or unknown_image_assessment(
+                    'generated image accepted for human review'
+                ),
+                source='generated',
+                source_url=source_url,
+            )
+            record['original_role'] = role
+            record['original_position'] = index
+            record['selection_action'] = (
+                'promote_to_main' if index == selected_index and index else
+                'retain_main' if index == selected_index else
+                'keep_attachment'
+            )
+            record['accepted_without_machine_review'] = bool(
+                meta.get('accepted_without_machine_review')
+            )
+            record['source_image_action'] = image_action(
+                assessments.get(source_url)
+            )
+            record['source_text_assessment'] = dict(
+                main_text_assessments.get(source_url) or {}
+            )
+            record['source_detected_text'] = list(dict.fromkeys(
+                list((assessments.get(source_url) or {}).get('detected_text') or [])
+                + list((main_text_assessments.get(source_url) or {}).get('detected_text') or [])
+            ))
+            record['edit_action'] = 'localized_edit'
+            record['generation_route_offset'] = int(meta.get('route_offset') or 0)
+            record['locale'] = locale
+            records.append(record)
+        for position, source_url in enumerate(variants):
+            kind = f'variant|{locale}'
+            replacement = generated_by_target[(source_url, kind)]
+            meta = cache.get('gen_meta', {}).get(f'{kind}:{source_url}') or {}
+            record = assessment_record(
+                url=replacement,
+                role='variant',
+                assessment=meta.get('risk_assessment') or unknown_image_assessment(
+                    'generated image accepted for human review'
+                ),
+                source='generated',
+                source_url=source_url,
+            )
+            record['original_role'] = 'variant'
+            record['original_position'] = position
+            record['accepted_without_machine_review'] = bool(
+                meta.get('accepted_without_machine_review')
+            )
+            record['source_image_action'] = image_action(
+                assessments.get(source_url)
+            )
+            record['source_text_assessment'] = dict(
+                main_text_assessments.get(source_url) or {}
+            )
+            record['source_detected_text'] = list(dict.fromkeys(
+                list((assessments.get(source_url) or {}).get('detected_text') or [])
+                + list((main_text_assessments.get(source_url) or {}).get('detected_text') or [])
+            ))
+            record['edit_action'] = 'localized_edit'
+            record['generation_route_offset'] = int(meta.get('route_offset') or 0)
+            record['locale'] = locale
+            records.append(record)
+        staged['_image_assessments'] = sorted(
+            records,
+            key=lambda item: (ROLE_PRIORITY.get(item['role'], 9), item.get('original_position', 0)),
+        )
+        staged_rows[product_id] = staged
+    for product_id, staged in staged_rows.items():
+        row_by_id[product_id].update(staged)
+    generated_main = sum(1 for row in data for _ in [row.get('main_img')])
+    generated_variants = sum(len(row.get('var_imgs') or []) for row in data)
+    generated_attachments = sum(len(row.get('extra_imgs') or []) for row in data)
+    runtime_metrics['image_safety_gate'] = {
+        'processing_mode': 'regenerate_all_localized',
+        'source_images': len(usage),
+        'references': sum(len(items) for items in usage.values()),
+        'reviewed': len(assessments),
+        'safe': sum(assessment_status(value) == 'safe' for value in assessments.values()),
+        'risk': sum(assessment_status(value) == 'risk' for value in assessments.values()),
+        'unknown': sum(assessment_status(value) == 'unknown' for value in assessments.values()),
+        'generated_main': generated_main,
+        'generated_attachment': generated_attachments,
+        'generated_variant': generated_variants,
+        'generation_requests': len(targets),
+        'generated_unique_targets': len(targets),
+        'attachment_deleted': 0,
+        'variant_deleted': 0,
+        'publish_blockers': 0,
+        'locale_targets': sorted({_generation_locale(kind) for _, kind in targets}),
+    }
+    runtime_metrics['image_remediation'] = {
+        'reviewed': len(assessments),
+        'flagged': sum(assessment_status(value) == 'risk' for value in assessments.values()),
+        'generated_candidates_reviewed': 0,
+        'generated_main': generated_main,
+        'generated_attachment': generated_attachments,
+        'generated_variant': generated_variants,
+        'generation_url_checked': len(targets),
+        'generation_url_valid': len(generated_by_target),
+        'generation_url_invalid': 0,
+        'attachment_deleted': 0,
+        'variant_deleted': 0,
+        'publish_blockers': 0,
+    }
+    runtime_metrics['image_assessments'] = {url: dict(value) for url, value in assessments.items()}
+    runtime_metrics['main_text_assessments'] = {url: dict(value) for url, value in main_text_assessments.items()}
+    save_cache(cache_path, cache)
+    return list(data)
+
 def run_structured_image_safety_gate(data: list[dict[str, Any]], cache_path: str | None=None, quality_issues: list[str] | None=None, progress: Callable[[int, int], None] | None=None, runtime_metrics: dict[str, Any] | None=None, provider_getter: Callable[[], object] | None=None) -> list[dict[str, Any]]:
     """Audit every source image, remediate risks, and fail closed."""
     if provider_getter is None:
@@ -1067,6 +1370,21 @@ def run_structured_image_safety_gate(data: list[dict[str, Any]], cache_path: str
     usage, row_by_id = _index_images(data)
     urls = sorted(usage)
     _review_source_images(urls, assessments=assessments, cache=cache, cache_path=cache_path, provider_getter=provider_getter, concurrency_stats=concurrency_stats, progress=progress)
+    if _image_processing_mode() == 'regenerate_all_localized':
+        return _regenerate_all_localized_images(
+            data,
+            usage=usage,
+            row_by_id=row_by_id,
+            assessments=assessments,
+            main_text_assessments=main_text_assessments,
+            cache=cache,
+            cache_path=cache_path,
+            provider_getter=provider_getter,
+            concurrency_stats=concurrency_stats,
+            runtime_metrics=runtime_metrics,
+            quality_issues=quality_issues,
+            generation_version=generation_version,
+        )
     if _image_processing_mode() == 'select_existing':
         return _select_existing_images(
             data,

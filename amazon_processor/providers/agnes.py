@@ -638,19 +638,23 @@ class AgnesProvider(ModelProvider):
         context: str = "",
         route_offset: int = 0,
         reference_free: bool = False,
+        prompt_override: str | None = None,
+        ratio: str | None = None,
     ) -> Optional[str]:
         del route_offset
-        prompt = (
-            self.MAIN_REFERENCE_FREE_PROMPT
-            if reference_free and not is_variant
-            else (
-            self.VARIANT_IMAGE_PROMPT
-            if is_variant
-            else self.MAIN_IMAGE_PROMPT
+        prompt = str(prompt_override or "").strip()
+        if not prompt:
+            prompt = (
+                self.MAIN_REFERENCE_FREE_PROMPT
+                if reference_free and not is_variant
+                else (
+                    self.VARIANT_IMAGE_PROMPT
+                    if is_variant
+                    else self.MAIN_IMAGE_PROMPT
+                )
             )
-        )
         context_text = str(context or "").strip()[:1400]
-        if context_text:
+        if context_text and not prompt_override:
             prompt += "\n\n" + get_prompt_registry().render(
                 "images.listing_context",
                 context=context_text,
@@ -662,21 +666,24 @@ class AgnesProvider(ModelProvider):
             self._ensure_not_congested("image_gen")
             self._acquire_image()
             try:
+                payload = {
+                    "model": self.IMAGE_MODEL,
+                    "prompt": prompt,
+                    "size": size,
+                    "extra_body": (
+                        {"response_format": "url"}
+                        if reference_free
+                        else {
+                            "image": [image_url],
+                            "response_format": "url",
+                        }
+                    ),
+                }
+                if ratio:
+                    payload["ratio"] = str(ratio)
                 response = self._session.post(
                     f"{self.BASE_URL}/v1/images/generations",
-                    json={
-                        "model": self.IMAGE_MODEL,
-                        "prompt": prompt,
-                        "size": size,
-                        "extra_body": (
-                            {"response_format": "url"}
-                            if reference_free
-                            else {
-                                "image": [image_url],
-                                "response_format": "url",
-                            }
-                        ),
-                    },
+                    json=payload,
                     timeout=(
                         self.REFERENCE_FREE_IMAGE_REQUEST_TIMEOUT_S
                         if reference_free

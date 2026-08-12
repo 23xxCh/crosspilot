@@ -255,10 +255,10 @@ def image_action(value: object) -> str:
             return 'block_publish'
         return 'keep_review'
     reasons = set(normalized['reasons'])
-    if reasons & EDIT_REMOVE_REASONS:
-        return 'edit_remove'
     if reasons & EDIT_TRANSLATE_REASONS:
         return 'edit_translate'
+    if reasons & EDIT_REMOVE_REASONS:
+        return 'edit_remove'
     return 'keep_review'
 
 def image_requires_edit(value: object) -> bool:

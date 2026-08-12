@@ -380,6 +380,7 @@
           <p id="status-text">正在检查配置状态</p>
         </div>
         <div class="header-actions">
+          <button type="button" id="test-routes-button">测试线路</button>
           <button type="button" id="validate-button">检查配置</button>
           <button type="button" class="primary" id="save-button">保存全部</button>
         </div>
@@ -421,6 +422,7 @@
     let baseline = "";
     let toastTimer = 0;
     let lastInteraction = Date.now();
+    let routeTestResults = [];
 
     const $ = (selector, root = document) => root.querySelector(selector);
     const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -641,7 +643,9 @@
         <div class="section-heading">
           <div><h2>模型与回退线路</h2><p>每条线路独立选择 Provider、Endpoint、模型和命名凭据。保存前会检查所有主线路和备用线路都能找到密钥。</p></div>
           <span class="badge">当前配置档：${escapeHtml(settings.active_profile)}</span>
-        </div>${sections}`;
+        </div>
+        ${routeTestResults.length ? `<div class="panel"><h3>最近一次线路测试</h3>${routeTestResults.map(item => `<div class="backup-row"><strong>${escapeHtml(operationNames[item.operation])} · ${escapeHtml(item.route_label)} · ${escapeHtml(item.model)}</strong><span class="badge">${escapeHtml(item.status)}</span><small>${escapeHtml(item.message)} · ${escapeHtml(item.latency_ms)} ms</small></div>`).join("")}</div>` : ""}
+        ${sections}`;
       if (serverState.processing) {
         $$("#tab-models input, #tab-models select, #tab-models textarea, #tab-models button").forEach(node => node.disabled = true);
       }
@@ -821,6 +825,27 @@
       }
     }
 
+    async function testRoutes() {
+      const button = $("#test-routes-button");
+      button.disabled = true;
+      const oldText = button.textContent;
+      button.textContent = "测试中…";
+      try {
+        const result = await api("/api/test-routes", {
+          method: "POST",
+          body: "{}",
+        });
+        routeTestResults = result.results || [];
+        renderModels();
+        toast(`线路测试完成：${result.passed}/${result.tested} 条可连接；未调用付费模型`);
+      } catch (error) {
+        toast(error.message, true);
+      } finally {
+        button.textContent = oldText;
+        updateHeader();
+      }
+    }
+
     document.addEventListener("click", async event => {
       const button = event.target.closest("button");
       if (!button) return;
@@ -966,6 +991,7 @@
     });
 
     $("#validate-button").addEventListener("click", () => validate(false));
+    $("#test-routes-button").addEventListener("click", testRoutes);
     $("#save-button").addEventListener("click", () => validate(true));
     window.addEventListener("beforeunload", event => {
       if (isDirty()) {
