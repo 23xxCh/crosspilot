@@ -19,17 +19,21 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from typing import Callable, Iterable
 
 from .config.locking import ProcessLock, processor_is_running
-from .delivery import STATUS_NAME
+from .delivery import REFILL_NAME, STATUS_NAME
+from . import operator_workspace
 from .schema import AMAZON_JSON_OUTPUT_FIELDS, validate_columnar_payload
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INPUT_ROOT = PROJECT_ROOT / "01_输入采集表"
-DEFAULT_INBOX = INPUT_ROOT / "待处理"
+LEGACY_INBOX = INPUT_ROOT / "待处理"
+OPERATOR_ROOT = PROJECT_ROOT / "Amazon日常操作"
+DEFAULT_INBOX = OPERATOR_ROOT / operator_workspace.INBOX_NAME
 ACCEPTED_ROOT = INPUT_ROOT / "已接收"
 RUNTIME_ROOT = PROJECT_ROOT / ".runtime" / "server"
 JOBS_ROOT = RUNTIME_ROOT / "jobs"
@@ -38,9 +42,17 @@ OUTCOMES_ROOT = RUNTIME_ROOT / "outcomes"
 WORKER_LOCK = RUNTIME_ROOT / "worker.lock"
 MAINTENANCE_PATH = RUNTIME_ROOT / "maintenance.json"
 RETENTION_STATE_PATH = RUNTIME_ROOT / "retention.json"
+CACHE_RETENTION_DAYS = 2
 DELIVERIES_ROOT = PROJECT_ROOT / "02_处理结果" / "服务器交付"
+FORMAL_LATEST_ROOT = PROJECT_ROOT / "02_处理结果" / "最新"
 
-ACTIVE_STATUSES = {"queued", "running", "retry_wait", "blocked"}
+ACTIVE_STATUSES = {
+    "queued",
+    "running",
+    "retry_wait",
+    "delivery_retry",
+    "blocked",
+}
 TERMINAL_STATUSES = {
     "published",
     "published_with_warnings",
@@ -134,13 +146,23 @@ def sha256_file(path: Path) -> str:
 
 def _atomic_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    temporary = path.with_suffix(
+        path.suffix
+        + f".{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp"
+    )
     try:
         temporary.write_text(
             json.dumps(value, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        os.replace(temporary, path)
+        for attempt in range(5):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt >= 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -167,6 +189,25 @@ def iter_input_files(input_dir: Path) -> Iterable[Path]:
             return 2**63 - 1, path.name
 
     return iter(sorted(candidates, key=received_order))
+
+
+def intake_files(input_dir: Path) -> list[Path]:
+    """Return new operator files plus pending files from the legacy inbox."""
+    input_path = Path(input_dir).expanduser().resolve()
+    roots = [input_path]
+    if input_path == DEFAULT_INBOX.resolve():
+        legacy = LEGACY_INBOX.resolve()
+        if legacy != input_path:
+            roots.append(legacy)
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        for source in iter_input_files(root):
+            resolved = source.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                files.append(source)
+    return files
 
 
 def is_file_stable(path: Path, stable_seconds: float = 5.0) -> bool:
@@ -204,6 +245,7 @@ class JobState:
     output_path: str = ""
     review_path: str = ""
     delivery_path: str = ""
+    operator_delivery_path: str = ""
     failure_kind: str = ""
     pending_product_ids: list[str] | None = None
     isolated_product_ids: list[str] | None = None
@@ -597,6 +639,26 @@ def snapshot_delivery(
     if log.is_file():
         _hardlink_or_copy(str(log), str(staging / log.name))
     os.replace(staging, target)
+    if category == "成功":
+        refill = target / REFILL_NAME
+        if refill.is_file():
+            latest = DELIVERIES_ROOT / "跨境电商自动化回填表_最新.json"
+            temporary = latest.with_suffix(
+                latest.suffix
+                + f".{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp"
+            )
+            try:
+                _hardlink_or_copy(str(refill), str(temporary))
+                for attempt in range(5):
+                    try:
+                        os.replace(temporary, latest)
+                        break
+                    except PermissionError:
+                        if attempt >= 4:
+                            raise
+                        time.sleep(0.05 * (attempt + 1))
+            finally:
+                temporary.unlink(missing_ok=True)
     return target
 
 
@@ -850,6 +912,120 @@ def _iter_states() -> list[JobState]:
     )
 
 
+def _publish_operator_success(
+    state: JobState,
+    *,
+    artifact_dir: Path,
+) -> Path:
+    return operator_workspace.publish_success(
+        state,
+        artifact_dir,
+        root=OPERATOR_ROOT,
+    )
+
+
+def _publish_operator_attention(state: JobState) -> Path:
+    return operator_workspace.publish_attention(state, root=OPERATOR_ROOT)
+
+
+def refresh_operator_status(*, healthy: bool | None = None) -> Path | None:
+    """Refresh the static operator page without exposing technical details."""
+    try:
+        if healthy is None:
+            try:
+                healthy = bool(worker_health(120.0).get("healthy"))
+            except Exception:
+                healthy = False
+        if (RUNTIME_ROOT / "restart_required.json").is_file():
+            healthy = False
+        return operator_workspace.write_status_page(
+            operator_workspace.summarize_jobs(_iter_states()),
+            healthy=bool(healthy),
+            path=operator_workspace.paths_for(OPERATOR_ROOT).status,
+        )
+    except Exception as exc:
+        print(
+            "[WORKER] 操作员状态页暂时无法更新: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        return None
+
+
+def repair_operator_deliveries() -> int:
+    """Expose existing results after an upgrade without reprocessing inputs."""
+    repaired = 0
+    operator_workspace.ensure_workspace(OPERATOR_ROOT)
+    operator_workspace.bootstrap_latest_result(
+        FORMAL_LATEST_ROOT,
+        root=OPERATOR_ROOT,
+    )
+    states = _iter_states()
+    successful = [
+        state
+        for state in states
+        if state.status in {"published", "published_with_warnings"}
+    ]
+    latest_success = max(
+        successful,
+        key=lambda state: state.finished_at or state.updated_at or "",
+        default=None,
+    )
+    for state in states:
+        existing = (
+            Path(state.operator_delivery_path)
+            if state.operator_delivery_path
+            else None
+        )
+        if existing and existing.exists():
+            continue
+        try:
+            if state.status in {"published", "published_with_warnings"}:
+                candidates = []
+                if state.output_path:
+                    candidates.append(Path(state.output_path).parent)
+                if state.delivery_path:
+                    candidates.append(Path(state.delivery_path))
+                artifact_dir = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if (candidate / REFILL_NAME).is_file()
+                    ),
+                    None,
+                )
+                if (
+                    artifact_dir is None
+                    and state is latest_success
+                    and (FORMAL_LATEST_ROOT / REFILL_NAME).is_file()
+                ):
+                    artifact_dir = FORMAL_LATEST_ROOT
+                if artifact_dir is None:
+                    continue
+                state.operator_delivery_path = str(
+                    _publish_operator_success(
+                        state,
+                        artifact_dir=artifact_dir,
+                    )
+                )
+            elif state.status in operator_workspace.ATTENTION_STATUSES:
+                state.operator_delivery_path = str(
+                    _publish_operator_attention(state)
+                )
+            else:
+                continue
+            _save_state(state)
+            repaired += 1
+        except Exception as exc:
+            print(
+                "[WORKER] 历史任务交付目录暂未补齐: "
+                f"{state.source_name}: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+    refresh_operator_status()
+    return repaired
+
+
 def _active_queue() -> list[JobState]:
     queue = [state for state in _iter_states() if state.status in ACTIVE_STATUSES]
     for position, state in enumerate(queue, start=1):
@@ -980,8 +1156,16 @@ def run_retention(
         ),
         "cache_removed": 0,
     }
+    # Cache files are disposable and expire after two days.  Never prune
+    # while a processor task may still be using them; the next daily pass
+    # will retry once the task is idle.
+    if not processor_is_running():
+        report["cache_removed"] = _remove_old_entries(
+            cache,
+            cutoff=now_value - timedelta(days=CACHE_RETENTION_DAYS),
+        )
     if free_reader() < 30.0:
-        report["cache_removed"] = _prune_cache_until(
+        report["cache_removed"] += _prune_cache_until(
             cache,
             target_free_gb=50.0,
             disk_free=free_reader,
@@ -1023,6 +1207,7 @@ def run_child(
     environment["PYTHONUTF8"] = "1"
     environment["PYTHONIOENCODING"] = "utf-8"
     timed_out = False
+    heartbeat_warning_logged = False
     with log_path.open("w", encoding="utf-8") as stream:
         process = subprocess.Popen(
             command,
@@ -1043,7 +1228,20 @@ def run_child(
                 last_size = current_size
                 last_progress = time.monotonic()
             if heartbeat:
-                heartbeat()
+                try:
+                    heartbeat()
+                    heartbeat_warning_logged = False
+                except Exception as exc:
+                    # A transient status-file sharing violation must never
+                    # orphan a paid processing child. Keep supervising it and
+                    # let the next heartbeat repair the operator-facing state.
+                    if not heartbeat_warning_logged:
+                        stream.write(
+                            "\n[WORKER] 心跳写入暂时失败，任务继续运行: "
+                            f"{type(exc).__name__}: {exc}\n"
+                        )
+                        stream.flush()
+                        heartbeat_warning_logged = True
             if time.monotonic() - started > max(0.1, timeout_hours * 3600):
                 timed_out = True
                 process.terminate()
@@ -1076,6 +1274,62 @@ def run_child(
     return exit_code, log_path.read_text(encoding="utf-8", errors="replace")
 
 
+def _schedule_operator_delivery_retry(
+    state: JobState,
+    exc: Exception,
+    *,
+    retry_base_seconds: float,
+) -> JobState:
+    delay = retry_delay_seconds(
+        max(1, state.attempt),
+        retry_base_seconds=retry_base_seconds,
+    )
+    state.status = "delivery_retry"
+    state.stage = "delivering_result"
+    state.failure_kind = "internal"
+    state.next_retry_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=delay)
+    ).isoformat(timespec="seconds")
+    state.blocker_reason = "结果已生成，系统正在自动整理操作员交付目录"
+    state.error = f"OperatorDeliveryError: {type(exc).__name__}: {exc}"
+    return state
+
+
+def _retry_operator_delivery(
+    state: JobState,
+    *,
+    retry_base_seconds: float,
+) -> JobState:
+    """Retry only local result packaging; never rerun paid processing."""
+    try:
+        output = Path(state.output_path)
+        validate_published_output(output)
+        target = _publish_operator_success(
+            state,
+            artifact_dir=output.parent,
+        )
+        state.operator_delivery_path = str(target)
+        state.status = (
+            "published_with_warnings"
+            if state.isolated_product_ids
+            else "published"
+        )
+        state.stage = "completed"
+        state.failure_kind = ""
+        state.next_retry_at = ""
+        state.blocker_reason = ""
+        state.error = ""
+    except Exception as exc:
+        _schedule_operator_delivery_retry(
+            state,
+            exc,
+            retry_base_seconds=retry_base_seconds,
+        )
+    _save_state(state)
+    refresh_operator_status()
+    return state
+
+
 def process_one(
     source: Path,
     *,
@@ -1098,6 +1352,11 @@ def process_one(
         retry_terminal=retry_terminal,
     ):
         return previous
+    if previous and previous.status == "delivery_retry":
+        return _retry_operator_delivery(
+            previous,
+            retry_base_seconds=retry_base_seconds,
+        )
     if previous and previous.status == "running" and processor_is_running():
         # A restarted watcher must not launch a second child while the old
         # child still owns the processor lock.
@@ -1129,6 +1388,7 @@ def process_one(
         stage="processing",
     )
     _save_state(state)
+    refresh_operator_status(healthy=True)
     print(f"[WORKER] 开始处理: {source.name} ({file_hash[:12]})", flush=True)
     saved_progress: tuple[str, int, int] | None = None
 
@@ -1141,6 +1401,7 @@ def process_one(
         current_progress = (stage, current, total)
         if current_progress != saved_progress:
             _save_state(state)
+            refresh_operator_status(healthy=True)
             saved_progress = current_progress
         _write_health(
             "running",
@@ -1223,6 +1484,20 @@ def process_one(
             state.status, state.error, state.failure_kind = (
                 _classify_failure(message, attempt, max_retries)
             )
+        else:
+            try:
+                state.operator_delivery_path = str(
+                    _publish_operator_success(
+                        state,
+                        artifact_dir=Path(state.output_path).parent,
+                    )
+                )
+            except Exception as exc:
+                _schedule_operator_delivery_retry(
+                    state,
+                    exc,
+                    retry_base_seconds=retry_base_seconds,
+                )
     elif state.status == "pending_review":
         review = Path(state.review_path)
         if review.is_file() and _pending_review_is_retryable(review):
@@ -1240,6 +1515,12 @@ def process_one(
             state.error = "全部商品均无法自动放行，正式表未覆盖"
             state.blocker_reason = state.error
             state.stage = "needs_review"
+            try:
+                state.operator_delivery_path = str(
+                    _publish_operator_attention(state)
+                )
+            except Exception:
+                pass
     elif exit_code == 0 and state.status == "invalid_result":
         message = "PublishedArtifactValidationError: 子进程成功但没有结果标记"
         state.status, state.error, state.failure_kind = _classify_failure(
@@ -1270,6 +1551,12 @@ def process_one(
             state,
             category="阻塞",
         ))
+        try:
+            state.operator_delivery_path = str(
+                _publish_operator_attention(state)
+            )
+        except Exception:
+            pass
     elif state.status in {"failed", "invalid_input"}:
         state.stage = "stopped"
         state.blocker_reason = state.error
@@ -1278,10 +1565,20 @@ def process_one(
             state,
             category="阻塞",
         ))
+        try:
+            state.operator_delivery_path = str(
+                _publish_operator_attention(state)
+            )
+        except Exception:
+            pass
     _save_state(state)
     _write_delivery_state(state)
     _write_health(
-        "idle" if state.status != "retry_wait" else "degraded",
+        (
+            "degraded"
+            if state.status in {"retry_wait", "delivery_retry"}
+            else "idle"
+        ),
         last_job=file_hash,
         last_job_status=state.status,
         delivery_path=state.delivery_path,
@@ -1289,6 +1586,7 @@ def process_one(
         isolated_count=len(state.isolated_product_ids or []),
         free_disk_gb=round(_disk_free_gb(), 2),
     )
+    refresh_operator_status()
     print(
         f"[WORKER] {state.status}: {source.name} (exit={exit_code})",
         flush=True,
@@ -1319,6 +1617,7 @@ def run_worker(
     )
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
     with ProcessLock(WORKER_LOCK):
+        operator_workspace.ensure_workspace(OPERATOR_ROOT)
         try:
             readiness = preflight(input_path)
         except Exception as exc:
@@ -1336,12 +1635,14 @@ def run_worker(
         print(f"[WORKER] 监控目录: {input_path}", flush=True)
         accepted_root.mkdir(parents=True, exist_ok=True)
         reconcile_jobs(accepted_root=accepted_root)
+        repair_operator_deliveries()
         tracker = StabilityTracker()
         last_retention = 0.0
         last_preflight = time.monotonic()
         configuration_blocked = bool(readiness.get("missing_operations"))
         once_observed = False
         _write_health("idle", queue_depth=len(_active_queue()), **readiness)
+        refresh_operator_status(healthy=not configuration_blocked)
         while True:
             if (
                 configuration_blocked
@@ -1377,7 +1678,7 @@ def run_worker(
                 last_retention = time.monotonic()
                 free_gb = _disk_free_gb()
 
-            inbox_files = list(iter_input_files(input_path))
+            inbox_files = intake_files(input_path)
             if not maintenance and free_gb >= 10.0:
                 for source in inbox_files:
                     if not tracker.ready(
@@ -1396,6 +1697,7 @@ def run_worker(
                             f"({accepted.sha256[:12]})",
                             flush=True,
                         )
+                        refresh_operator_status(healthy=True)
                     except Exception as exc:
                         print(
                             f"[WORKER] 受理失败 {source.name}: "
@@ -1461,6 +1763,8 @@ def run_worker(
                 if current and current.status == "blocked"
                 else "paused_provider"
                 if current and current.status == "retry_wait"
+                else "delivering_result"
+                if current and current.status == "delivery_retry"
                 else "idle"
             )
             successful = [
@@ -1492,6 +1796,9 @@ def run_worker(
                 free_disk_gb=round(free_gb, 2),
                 last_success_at=last_success,
             )
+            refresh_operator_status(
+                healthy=not configuration_blocked and free_gb >= 10.0,
+            )
             if once and (once_observed or stable_seconds <= 0):
                 _write_health("stopped", input_dir=str(input_path))
                 return 0
@@ -1510,6 +1817,7 @@ __all__ = [
     "JobState",
     "StabilityTracker",
     "accept_input",
+    "intake_files",
     "iter_input_files",
     "is_file_stable",
     "process_one",
@@ -1519,6 +1827,8 @@ __all__ = [
     "run_child",
     "run_worker",
     "run_retention",
+    "refresh_operator_status",
+    "repair_operator_deliveries",
     "sha256_file",
     "snapshot_delivery",
     "validate_published_output",

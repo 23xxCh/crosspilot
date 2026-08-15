@@ -70,6 +70,7 @@ X-API-Key: <key>
 - `queued`：已进入队列。
 - `running`：正在处理。
 - `retry_wait`：临时网络或 Provider 异常，系统会自动续跑。
+- `delivery_retry`：AI 处理已经完成，系统只在重试本地结果目录整理。
 - `blocked`：鉴权或额度异常，等待服务器恢复。
 - `invalid_input`：输入结构或源数据不合格。
 - `pending_review`：需要人工审核，没有覆盖旧正式表。

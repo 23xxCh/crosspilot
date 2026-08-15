@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $taskName = 'AmazonProcessor-Unattended'
 $apiTaskName = 'AmazonProcessor-API'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -49,79 +49,78 @@ function Get-TaskRunning([string]$name) {
     return $null -ne $task -and $task.State -eq 'Running'
 }
 
+$heartbeatFresh = $false
+if (Test-Path -LiteralPath $heartbeatPath -PathType Leaf) {
+    try {
+        $updated = (Get-Item -LiteralPath $heartbeatPath).LastWriteTimeUtc
+        $heartbeatFresh = ([DateTime]::UtcNow - $updated).TotalSeconds -le 180
+    }
+    catch { $heartbeatFresh = $false }
+}
 $workerRunning = Get-TaskRunning $taskName
-if (-not $workerRunning) {
-    Restart-RegisteredTask $taskName '计划任务进程已消失'
+if ($heartbeatFresh) {
     $state.worker_stale = 0
 }
 else {
-    $heartbeatFresh = $false
-    if (Test-Path -LiteralPath $heartbeatPath -PathType Leaf) {
-        try {
-            $heartbeat = Get-Content -LiteralPath $heartbeatPath -Raw | ConvertFrom-Json
-            $updated = [DateTimeOffset]::Parse([string]$heartbeat.updated_at)
-            $heartbeatFresh = ([DateTimeOffset]::UtcNow - $updated).TotalSeconds -le 180
+    $state.worker_stale++
+    if ($state.worker_stale -ge 2) {
+        $reason = if ($workerRunning) {
+            '心跳连续两次过期'
         }
-        catch { $heartbeatFresh = $false }
-    }
-    if ($heartbeatFresh) {
+        else {
+            '进程状态异常且心跳连续两次失联'
+        }
+        Restart-RegisteredTask $taskName $reason
         $state.worker_stale = 0
-    }
-    else {
-        $state.worker_stale++
-        if ($state.worker_stale -ge 2) {
-            Restart-RegisteredTask $taskName '心跳连续两次过期'
-            $state.worker_stale = 0
-        }
     }
 }
 
+$apiKey = [Environment]::GetEnvironmentVariable(
+    'AMAZON_PROCESSOR_API_KEY', 'Machine'
+)
+if (-not $apiKey) {
+    $apiKey = [Environment]::GetEnvironmentVariable(
+        'AMAZON_PROCESSOR_API_KEY', 'User'
+    )
+}
+if (-not $apiKey -and (Test-Path -LiteralPath $envPath -PathType Leaf)) {
+    $line = Get-Content -LiteralPath $envPath | Where-Object {
+        $_ -match '^\s*AMAZON_PROCESSOR_API_KEY\s*='
+    } | Select-Object -Last 1
+    if ($line) { $apiKey = ($line -split '=', 2)[1].Trim() }
+}
+$apiHealthy = $false
+if ($apiKey) {
+    try {
+        $response = Invoke-WebRequest `
+            -Uri 'http://127.0.0.1:8765/api/v1/health' `
+            -Headers @{ 'X-API-Key' = $apiKey } `
+            -TimeoutSec 10 `
+            -UseBasicParsing
+        $apiHealthy = $response.StatusCode -eq 200
+    }
+    catch {
+        # HTTP 503 means API is alive and only the Worker is degraded.
+        if ($_.Exception.Response.StatusCode.value__ -eq 503) {
+            $apiHealthy = $true
+        }
+    }
+}
 $apiRunning = Get-TaskRunning $apiTaskName
-if (-not $apiRunning) {
-    Restart-RegisteredTask $apiTaskName '计划任务进程已消失'
+if ($apiHealthy) {
     $state.api_stale = 0
 }
 else {
-    $apiKey = [Environment]::GetEnvironmentVariable(
-        'AMAZON_PROCESSOR_API_KEY', 'Machine'
-    )
-    if (-not $apiKey) {
-        $apiKey = [Environment]::GetEnvironmentVariable(
-            'AMAZON_PROCESSOR_API_KEY', 'User'
-        )
-    }
-    if (-not $apiKey -and (Test-Path -LiteralPath $envPath -PathType Leaf)) {
-        $line = Get-Content -LiteralPath $envPath | Where-Object {
-            $_ -match '^\s*AMAZON_PROCESSOR_API_KEY\s*='
-        } | Select-Object -Last 1
-        if ($line) { $apiKey = ($line -split '=', 2)[1].Trim() }
-    }
-    $apiHealthy = $false
-    if ($apiKey) {
-        try {
-            $response = Invoke-WebRequest `
-                -Uri 'http://127.0.0.1:8765/api/v1/health' `
-                -Headers @{ 'X-API-Key' = $apiKey } `
-                -TimeoutSec 10 `
-                -UseBasicParsing
-            $apiHealthy = $response.StatusCode -eq 200
+    $state.api_stale++
+    if ($state.api_stale -ge 2) {
+        $reason = if ($apiRunning) {
+            '健康检查连续两次失败'
         }
-        catch {
-            # HTTP 503 means API is alive and only the Worker is degraded.
-            if ($_.Exception.Response.StatusCode.value__ -eq 503) {
-                $apiHealthy = $true
-            }
+        else {
+            '进程状态异常且健康检查连续两次失败'
         }
-    }
-    if ($apiHealthy) {
+        Restart-RegisteredTask $apiTaskName $reason
         $state.api_stale = 0
-    }
-    else {
-        $state.api_stale++
-        if ($state.api_stale -ge 2) {
-            Restart-RegisteredTask $apiTaskName '健康检查连续两次失败'
-            $state.api_stale = 0
-        }
     }
 }
 

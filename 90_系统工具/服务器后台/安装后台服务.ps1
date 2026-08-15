@@ -191,7 +191,7 @@ Start-ScheduledTask -TaskName $apiTaskName
 Write-Host "已安装并启动：$taskName"
 Write-Host "已安装并启动：$apiTaskName"
 Write-Host "已安装看门狗：$watchdogTaskName"
-Write-Host "输入目录：$(Join-Path $projectRoot '01_输入采集表\待处理')"
+Write-Host "操作员目录：$(Join-Path $projectRoot 'Amazon日常操作')"
 Write-Host "交付目录：$(Join-Path $projectRoot '02_处理结果\服务器交付')"
 Write-Host '日常查看：00_常用入口\05_查看系统状态.bat'
 Write-Host '接口地址：http://127.0.0.1:8765/api/v1'

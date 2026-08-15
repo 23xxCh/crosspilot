@@ -15,6 +15,30 @@ from amazon_processor import api_server, server_worker
 API_KEY = "test_" + "a" * 32
 
 
+@pytest.fixture(autouse=True)
+def _isolate_operator_delivery(tmp_path, monkeypatch) -> None:
+    def fake_operator_success(_state, *, artifact_dir):
+        target = tmp_path / "operator-result"
+        target.mkdir(exist_ok=True)
+        return target
+
+    monkeypatch.setattr(
+        server_worker,
+        "_publish_operator_success",
+        fake_operator_success,
+    )
+    monkeypatch.setattr(
+        server_worker,
+        "_publish_operator_attention",
+        lambda _state: tmp_path / "operator-attention",
+    )
+    monkeypatch.setattr(
+        server_worker,
+        "refresh_operator_status",
+        lambda **_kwargs: None,
+    )
+
+
 def _payload() -> dict:
     return {
         "商品id": ["10001"],

@@ -47,6 +47,7 @@ JOB_STATUS_LABELS = {
     "queued": "排队",
     "running": "处理中",
     "retry_wait": "等待自动重试",
+    "delivery_retry": "正在整理结果",
     "blocked": "需要处理",
     "failed": "处理失败",
     "invalid_input": "输入不合格",
@@ -212,6 +213,8 @@ class JobAPIService:
             self.jobs_root / f"{state.sha256}.json",
             asdict(state),
         )
+        if self.jobs_root == server_worker.JOBS_ROOT.resolve():
+            server_worker.refresh_operator_status()
 
     def _validate_submission(self, body: bytes) -> tuple[dict, int]:
         try:
@@ -341,6 +344,7 @@ class JobAPIService:
             "queued": "任务已进入处理队列",
             "running": "任务正在处理",
             "retry_wait": "临时服务异常，系统将自动续跑",
+            "delivery_retry": "结果已生成，系统正在自动整理交付目录",
             "blocked": "模型鉴权或额度异常，等待服务器恢复",
             "failed": "任务自动重试后仍未完成",
             "invalid_input": "采集表格式或源数据不合格",
@@ -435,7 +439,13 @@ class JobAPIService:
 
     def artifact_path(self, job_id: str, kind: str) -> Path:
         state = self.get_state(job_id)
-        if state.status in {"queued", "running", "retry_wait", "blocked"}:
+        if state.status in {
+            "queued",
+            "running",
+            "retry_wait",
+            "delivery_retry",
+            "blocked",
+        }:
             raise APIRequestError(
                 HTTPStatus.ACCEPTED,
                 "result_not_ready",
@@ -889,8 +899,17 @@ def system_overview(
         "api": api,
         "counts": counts,
         "latest": latest,
-        "input_dir": str(DEFAULT_INPUT_DIR),
-        "delivery_dir": str(server_worker.DELIVERIES_ROOT),
+        "input_dir": str(server_worker.DEFAULT_INBOX),
+        "delivery_dir": str(
+            server_worker.operator_workspace.paths_for(
+                server_worker.OPERATOR_ROOT
+            ).results
+        ),
+        "operator_status_path": str(
+            server_worker.operator_workspace.paths_for(
+                server_worker.OPERATOR_ROOT
+            ).status
+        ),
     }
 
 
@@ -920,6 +939,7 @@ def format_system_overview(overview: dict[str, Any]) -> str:
         "queued",
         "running",
         "retry_wait",
+        "delivery_retry",
         "pending_review",
         "blocked",
         "invalid_input",

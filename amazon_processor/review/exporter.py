@@ -325,6 +325,7 @@ def export_review(input_path: str | Path, output_dir: str | Path, *, translate_w
         'products': len(rows),
         'released_products': row_count,
         'quarantined_products': len(quarantine_products),
+        'problem_product_ids': list(payload.get('有问题的产品id') or []),
         'translation_failures': translation_failures,
         'image_occurrences': image_occurrences,
         'unique_images': len(mapping),

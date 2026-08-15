@@ -21,6 +21,8 @@
 - 第一张 `产品图片链接` 是主图。
 - `有问题的产品id` 记录源描述无内容、没有合格主图或图片清理后没有产品附图的商品；普通模型失败不得写入。
 - 输入文件只读，正式输出必须通过 staging + 原子发布；失败时保留上一版正式表。
+- 无人值守默认收件箱是 `Amazon日常操作/1_把采集表放这里`；旧
+  `01_输入采集表/待处理` 只用于升级迁移。
 - 密钥只存未跟踪的 `.env`，不得写入代码、日志、测试快照或文档。
 
 ## 配置与 Prompt
@@ -40,6 +42,7 @@
 - Provider 与错误分类：`amazon_processor/providers/`
 - 输出、隔离、终审包：`amazon_processor/delivery.py`、`amazon_processor/review/`
 - 无人值守 Worker：`amazon_processor/server_worker.py`
+- 操作员静态状态页与友好交付：`amazon_processor/operator_workspace.py`
 - 任务 API：`amazon_processor/api_server.py`
 - 配置中心：`amazon_processor/config/`、`config/manager.html`
 

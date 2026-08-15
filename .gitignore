@@ -13,6 +13,7 @@ __pycache__/
 
 # Runtime and delivery
 .runtime/
+Amazon日常操作/
 02_处理结果/
 03_人工审核决定/
 *.log

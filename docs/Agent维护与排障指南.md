@@ -31,7 +31,7 @@ delivery 行级隔离、14字段校验、终审包、原子发布
 Windows 无人值守链路：
 
 ```text
-待处理目录 / POST /api/v1/jobs
+Amazon日常操作/1_把采集表放这里 / POST /api/v1/jobs
         ↓
 server_worker 按 SHA256 受理、FIFO、单任务运行
         ↓
@@ -64,6 +64,7 @@ python -m amazon_processor run --unattended
 02_处理结果/最新/                 最近一次正式发布
 02_处理结果/待人工审核/           未满足发布条件的审核包
 02_处理结果/服务器交付/           每个 Worker 任务的独立交付
+Amazon日常操作/                  操作员收件箱、静态状态页和友好交付
 .runtime/cache/                   可续跑缓存
 .runtime/server/jobs/             持久任务状态
 .runtime/server/logs/             每次尝试日志
@@ -71,7 +72,8 @@ python -m amazon_processor run --unattended
 .runtime/server/heartbeat.json    Worker 心跳
 ```
 
-缓存和输出不是源码。排查时可读，不要为了“重试干净”直接删除。
+缓存和输出不是源码。缓存默认保留 2 天，由 Worker 每日空闲时自动清理；活动任务期间不会清理。
+正式输出、输入和交付包按独立保留策略处理，不要为了“重试干净”直接删除。
 
 ## 3. 模块地图
 
@@ -127,6 +129,7 @@ python -m amazon_processor run --unattended
 | `queued` | 等待处理 | 检查队列位置，不重复提交 |
 | `running` | 子进程处理中 | 只读心跳、状态和最新日志 |
 | `retry_wait` | 临时故障退避 | 保留缓存，等待自动续跑 |
+| `delivery_retry` | AI 已完成，本地交付目录整理重试 | 只修复文件交付，不得重跑付费流水线 |
 | `blocked` | 鉴权、额度等人工问题 | 报告密钥/Endpoint/余额证据 |
 | `published` | 全部发布 | 验证文件和契约 |
 | `published_with_warnings` | 正常行已发布，部分隔离 | 核对正式行数和异常原因，不能只看退出码 |
@@ -135,6 +138,8 @@ python -m amazon_processor run --unattended
 | `failed` | 内部错误达到上限 | 复现、写测试、修复后显式重排队 |
 
 进程树中 `cmd → uv → venv shim → Python` 可能看起来像多个进程，但不代表多个 Worker。判断重复实例应检查命令行、父子 PID和 Worker锁。
+
+Windows 短暂占用 `heartbeat.json` 时，Worker 会自动重试状态写入；即使一次心跳写入失败，也必须继续托管正在运行的处理子进程。看门狗以实际心跳和 API 健康检查为准，不因计划任务界面显示 `Ready` 就重复启动健康服务。
 
 ## 7. 标准 Bug 修复流程
 

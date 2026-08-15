@@ -27,6 +27,11 @@ def _isolate_worker_runtime(tmp_path, monkeypatch) -> None:
         "DELIVERIES_ROOT",
         tmp_path / "deliveries",
     )
+    monkeypatch.setattr(
+        server_worker,
+        "OPERATOR_ROOT",
+        tmp_path / "Amazon日常操作",
+    )
 
     def fake_snapshot(_state, *, category, artifact_dir=None):
         target = tmp_path / "deliveries" / category / "job"
@@ -34,6 +39,38 @@ def _isolate_worker_runtime(tmp_path, monkeypatch) -> None:
         return target
 
     monkeypatch.setattr(server_worker, "snapshot_delivery", fake_snapshot)
+
+    def fake_operator_success(_state, *, artifact_dir):
+        target = tmp_path / "Amazon日常操作" / "2_到这里取结果" / "已完成" / "job"
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def fake_operator_attention(_state):
+        target = (
+            tmp_path
+            / "Amazon日常操作"
+            / "2_到这里取结果"
+            / "需要管理员处理"
+            / "job"
+        )
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    monkeypatch.setattr(
+        server_worker,
+        "_publish_operator_success",
+        fake_operator_success,
+    )
+    monkeypatch.setattr(
+        server_worker,
+        "_publish_operator_attention",
+        fake_operator_attention,
+    )
+    monkeypatch.setattr(
+        server_worker,
+        "refresh_operator_status",
+        lambda **_kwargs: None,
+    )
 
 
 def test_iter_input_files_ignores_outputs_and_temp_files(tmp_path) -> None:
@@ -60,6 +97,70 @@ def test_iter_input_files_uses_received_time_not_filename(tmp_path) -> None:
         "z-first.json",
         "a-second.json",
     ]
+
+
+def test_atomic_json_retries_transient_windows_sharing_violation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    target = tmp_path / "heartbeat.json"
+    real_replace = server_worker.os.replace
+    attempts = []
+
+    def flaky_replace(source, destination):
+        attempts.append((source, destination))
+        if len(attempts) == 1:
+            raise PermissionError(5, "sharing violation")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(server_worker.os, "replace", flaky_replace)
+    monkeypatch.setattr(server_worker.time, "sleep", lambda _seconds: None)
+
+    server_worker._atomic_json(target, {"status": "idle"})
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"status": "idle"}
+    assert len(attempts) == 2
+    assert not list(tmp_path.glob("heartbeat.json.*.tmp"))
+
+
+def test_run_child_keeps_supervising_when_heartbeat_write_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "input.json"
+    source.write_text("{}", encoding="utf-8")
+    log_path = tmp_path / "attempt.log"
+
+    class FakeProcess:
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.polls = 0
+
+        def poll(self):
+            self.polls += 1
+            return None if self.polls == 1 else 0
+
+    fake_process = FakeProcess()
+    monkeypatch.setattr(
+        server_worker.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: fake_process,
+    )
+    monkeypatch.setattr(server_worker.time, "sleep", lambda _seconds: None)
+
+    def broken_heartbeat() -> None:
+        raise PermissionError(5, "heartbeat is temporarily busy")
+
+    exit_code, output = server_worker.run_child(
+        source,
+        log_path,
+        heartbeat=broken_heartbeat,
+    )
+
+    assert exit_code == 0
+    assert "心跳写入暂时失败，任务继续运行" in output
+    assert fake_process.polls >= 2
 
 
 def test_process_one_deduplicates_published_hash(tmp_path, monkeypatch) -> None:
@@ -321,6 +422,9 @@ def test_snapshot_delivery_copies_only_selected_artifact_directory(
     assert (target / "跨境电商自动化回填表.json").is_file()
     assert (target / "input.json").is_file()
     assert (target / "job.log").is_file()
+    latest = delivery_root / "跨境电商自动化回填表_最新.json"
+    assert latest.is_file()
+    assert latest.read_text(encoding="utf-8") == "{}"
 
 
 def test_preflight_reports_missing_credentials_without_exit_loop(
@@ -567,10 +671,14 @@ def test_retention_removes_old_logs_but_protects_active_input(
     )
     active = accepted / "active.json"
     old_log = logs / "old.log"
+    old_cache = cache / "old.jpg"
+    new_cache = cache / "new.jpg"
     active.write_text("{}", encoding="utf-8")
     old_log.write_text("old", encoding="utf-8")
+    old_cache.write_text("old", encoding="utf-8")
+    new_cache.write_text("new", encoding="utf-8")
     old_timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()
-    for path in (active, old_log):
+    for path in (active, old_log, old_cache):
         server_worker.os.utime(path, (old_timestamp, old_timestamp))
     state = server_worker.JobState(
         source_path=str(active),
@@ -589,7 +697,10 @@ def test_retention_removes_old_logs_but_protects_active_input(
 
     assert active.is_file()
     assert not old_log.exists()
+    assert not old_cache.exists()
+    assert new_cache.exists()
     assert report["logs_removed"] == 1
+    assert report["cache_removed"] == 1
 
 
 def test_corrupt_state_is_quarantined_instead_of_crashing(tmp_path, monkeypatch) -> None:
@@ -637,3 +748,92 @@ def test_low_disk_keeps_new_inbox_file_unaccepted(tmp_path, monkeypatch) -> None
     assert code == 0
     assert source.is_file()
     assert not list((tmp_path / "jobs").glob("*.json"))
+
+
+def test_default_inbox_is_the_operator_drop_folder() -> None:
+    assert server_worker.DEFAULT_INBOX.name == "1_把采集表放这里"
+    assert server_worker.DEFAULT_INBOX.parent.name == "Amazon日常操作"
+
+
+def test_default_worker_reads_legacy_inbox_during_migration(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    operator_inbox = tmp_path / "Amazon日常操作" / "1_把采集表放这里"
+    legacy_inbox = tmp_path / "01_输入采集表" / "待处理"
+    operator_inbox.mkdir(parents=True)
+    legacy_inbox.mkdir(parents=True)
+    current = operator_inbox / "new.json"
+    legacy = legacy_inbox / "old.json"
+    current.write_text("{}", encoding="utf-8")
+    legacy.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(server_worker, "DEFAULT_INBOX", operator_inbox)
+    monkeypatch.setattr(server_worker, "LEGACY_INBOX", legacy_inbox)
+
+    found = server_worker.intake_files(operator_inbox)
+
+    assert found == [current, legacy]
+
+
+def test_operator_delivery_failure_retries_packaging_without_rerunning_child(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "input.json"
+    source.write_text("{}", encoding="utf-8")
+    formal = tmp_path / "formal" / "跨境电商自动化回填表.json"
+    formal.parent.mkdir()
+    formal.write_text('{"商品id": [], "有问题的产品id": []}', encoding="utf-8")
+    monkeypatch.setattr(server_worker, "JOBS_ROOT", tmp_path / "jobs")
+    monkeypatch.setattr(server_worker, "LOGS_ROOT", tmp_path / "logs")
+    monkeypatch.setattr(server_worker, "is_file_stable", lambda *_args: True)
+    child_calls = []
+
+    def fake_run(_source, _log_path, *, outcome_path, **_kwargs):
+        child_calls.append(1)
+        server_worker._atomic_json(outcome_path, {
+            "version": 1,
+            "status": "published",
+            "output_path": str(formal),
+            "review_path": str(formal.parent / "终审包.html"),
+        })
+        return 0, "structured outcome"
+
+    monkeypatch.setattr(server_worker, "run_child", fake_run)
+    monkeypatch.setattr(
+        server_worker,
+        "validate_published_output",
+        lambda _path: {"published": True},
+    )
+    publish_calls = []
+
+    def flaky_publish(_state, *, artifact_dir):
+        publish_calls.append(Path(artifact_dir))
+        if len(publish_calls) == 1:
+            raise PermissionError("sharing violation")
+        target = tmp_path / "operator-result"
+        target.mkdir()
+        return target
+
+    monkeypatch.setattr(
+        server_worker,
+        "_publish_operator_success",
+        flaky_publish,
+    )
+
+    first = server_worker.process_one(
+        source,
+        stable_seconds=0,
+        retry_base_seconds=0,
+    )
+    second = server_worker.process_one(
+        source,
+        stable_seconds=0,
+        retry_base_seconds=0,
+    )
+
+    assert first is not None and first.status == "delivery_retry"
+    assert second is not None and second.status == "published"
+    assert len(child_calls) == 1
+    assert len(publish_calls) == 2
+    assert second.operator_delivery_path == str(tmp_path / "operator-result")

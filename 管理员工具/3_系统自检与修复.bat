@@ -22,16 +22,16 @@ if exist "%BUNDLED_UV%" (
 )
 
 if not exist "%UV_PROJECT_ENVIRONMENT%\Scripts\python.exe" (
-  echo 首次查看状态，正在自动准备运行环境，请稍候...
+  echo 正在准备运行环境，请稍候...
   "%UV_EXE%" sync --frozen --quiet
   if errorlevel 1 (
-    echo 运行环境准备失败，请把本窗口内容发给管理员。
+    echo 运行环境准备失败，请重新运行“1_首次安装服务器”。
     pause
     exit /b 1
   )
 )
 
-"%UV_EXE%" run python -m amazon_processor system-status
+"%UV_EXE%" run python -m amazon_processor system-doctor
 echo.
 pause
 exit /b 0

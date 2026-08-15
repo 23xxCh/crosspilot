@@ -54,7 +54,19 @@ def render_html(
         if formal_payload and formal_count else ''
     )
     cards = []
+    group_counts = {'manual_review': 0, 'auto_passed': 0, 'auto_deleted': 0}
     for row in rows:
+        quarantine_reasons = row.get('quarantine_reasons') or []
+        if row.get('quarantined'):
+            group = 'manual_review' if quarantine_reasons else 'auto_deleted'
+        else:
+            group = 'auto_passed'
+        group_counts[group] += 1
+        group_label = {
+            'manual_review': '必须人工审核',
+            'auto_passed': '已自动通过',
+            'auto_deleted': '已自动删除/问题商品',
+        }[group]
         image_cards = []
         for image in row['images']:
             role = html.escape(image['role'])
@@ -286,15 +298,17 @@ def render_html(
             if row.get('quarantined')
             else '<span class="released-badge">正式表已放行</span>'
         )
+        group_badge = f'<span class="group-badge {group}">{group_label}</span>'
         cards.append(
             f'<article class="{product_class}" id="row-{row["row"]}" '
             f'data-search="{html.escape(search_text, quote=True)}" '
-            f'data-statuses="{html.escape(" ".join(sorted(statuses)), quote=True)}" '
+            f'data-statuses="{html.escape(" ".join(sorted(statuses | {group})), quote=True)}" '
             f'data-product="{html.escape(str(row["product_id"]), quote=True)}">'
             '<header>'
             f'<span class="row">第 {row["row"]} 行</span>'
             f'<span class="id">商品 ID：{html.escape(row["product_id"])}</span>'
             f'<span class="site-badge">站点：{html.escape(str(row.get("site") or "US"))}</span>'
+            f'{group_badge}'
             f'{release_badge}'
             '</header>'
             '<div class="product-actions">'
@@ -351,6 +365,10 @@ body{{margin:0;background:#f4f6f8;color:#17202a;font:15px/1.65 Arial,"Microsoft 
 .product header{{display:flex;gap:18px;color:#667;font-size:13px}}
 .quarantine-badge,.released-badge{{padding:2px 8px;border-radius:10px;font-weight:700}}
 .quarantine-badge{{background:#c0392b;color:white}} .released-badge{{background:#dff4e8;color:#17613d}}
+.group-badge{{padding:2px 8px;border-radius:10px;font-weight:700}}
+.group-badge.manual_review{{background:#fff0c2;color:#8a5a00}}
+.group-badge.auto_passed{{background:#dff4e8;color:#17613d}}
+.group-badge.auto_deleted{{background:#ececec;color:#555}}
 .site-badge{{padding:2px 8px;border-radius:10px;background:#e8eefc;color:#274b94;font-weight:700}}
 .localized-copy,.translated-copy{{margin-top:14px;padding:14px 16px;border:1px solid #dce3e8;border-radius:9px}}
 .localized-copy summary{{cursor:pointer;color:#274b94;font-weight:700}}
@@ -393,14 +411,19 @@ h2{{margin:10px 0 16px;font-size:21px}} h3{{margin:14px 0 6px;font-size:15px;col
 <div class="toolbar"><h1>Amazon 中文文案与图片检查表</h1>
 <input id="search" placeholder="搜索标题、商品 ID、描述、关键词">
 <select id="risk-filter">
-<option value="all">全部商品</option><option value="risk">含风险图</option>
+<option value="all">全部商品</option><option value="manual_review">必须人工审核</option>
+<option value="auto_passed">已自动通过</option><option value="auto_deleted">已自动删除/问题商品</option>
+<option value="risk">含风险图</option>
 <option value="unknown">含未知图</option><option value="quarantined">已隔离</option>
 <option value="generated">含生成图</option><option value="undecided">未审核</option>
 </select>
 <button id="export-decisions">导出审核决定.json</button>
 {refill_button}
 <button id="clear-decisions">清空本机决定</button></div>
-<div class="summary">商品 {summary["products"]} 个；图片引用 {summary["image_occurrences"]} 个；
+<div class="summary"><strong>审核分组：</strong>
+必须人工审核 {group_counts['manual_review']} 个；已自动通过 {group_counts['auto_passed']} 个；
+已自动删除/问题商品 {group_counts['auto_deleted']} 个。<br>
+商品 {summary["products"]} 个；图片引用 {summary["image_occurrences"]} 个；
 本地图片 {summary["downloaded_unique_images"]}/{summary["unique_images"]} 个；
 隔离商品 {summary.get("quarantined_products", 0)} 个。审核决定只保存在当前浏览器，
 请导出 JSON 后再由程序应用。
@@ -569,7 +592,10 @@ function applyFilters(){{
  const q=document.getElementById('search').value.trim().toLowerCase();
  const filter=document.getElementById('risk-filter').value;
  document.querySelectorAll('.product').forEach(card=>{{
-   let match=!q||card.dataset.search.includes(q);
+ let match=!q||card.dataset.search.includes(q);
+   if(filter==='manual_review') match=match&&card.dataset.statuses.includes('manual_review');
+   if(filter==='auto_passed') match=match&&card.dataset.statuses.includes('auto_passed');
+   if(filter==='auto_deleted') match=match&&card.dataset.statuses.includes('auto_deleted');
    if(filter==='risk') match=match&&card.dataset.statuses.includes('risk');
    if(filter==='unknown') match=match&&card.dataset.statuses.includes('unknown');
    if(filter==='quarantined') match=match&&card.dataset.statuses.includes('quarantined');

@@ -116,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     worker.add_argument(
         "--input-dir",
-        default=str(Path("01_输入采集表") / "待处理"),
+        default=str(Path("Amazon日常操作") / "1_把采集表放这里"),
         help="只读采集表目录",
     )
     worker.add_argument("--poll-seconds", type=float, default=15.0)
@@ -159,7 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     api.add_argument("--port", type=int, default=8765)
     api.add_argument(
         "--input-dir",
-        default=str(Path("01_输入采集表") / "待处理"),
+        default=str(Path("Amazon日常操作") / "1_把采集表放这里"),
         help="API 验证通过后原子写入的 Worker 输入目录",
     )
     api.add_argument("--max-body-mb", type=int, default=20)
@@ -181,6 +181,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="输出机器可读 JSON",
+    )
+    system_doctor = subcommands.add_parser(
+        "system-doctor",
+        help="离线检查并修复服务器运行环境",
+    )
+    system_doctor.add_argument(
+        "--json",
+        action="store_true",
+        help="输出机器可读 JSON",
+    )
+    system_doctor.add_argument(
+        "--check-only",
+        action="store_true",
+        help="只检查，不尝试启动已安装的后台任务",
     )
     return parser
 
@@ -257,6 +271,15 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(format_system_overview(overview))
             return 0
+        if args.command == "system-doctor":
+            from .system_doctor import format_report, run_system_doctor
+
+            report = run_system_doctor(repair=not args.check_only)
+            if args.json:
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+            else:
+                print(format_report(report))
+            return 0 if report.get("healthy") else 2
         if args.command == "run":
             result = process_json(
                 Path(args.input),
