@@ -1,0 +1,107 @@
+{
+  "version": 2,
+  "credentials": {
+    "deepseek_main": {
+      "label": "DeepSeek 主线路",
+      "env": "DEEPSEEK_KEY"
+    },
+    "agnes_main": {
+      "label": "Agnes 主线路",
+      "env": "AGNES_KEY"
+    },
+    "gpt_image_proxy": {
+      "label": "GPT Image 中转线路",
+      "env": "GPT_IMAGE_KEY"
+    }
+  },
+  "active_profile": "production",
+  "markets": {
+    "US": {"country": "美国", "language": "英语", "language_code": "en", "locale": "en-US", "compatibility_connector": "for"},
+    "UK": {"country": "英国", "language": "英语", "language_code": "en", "locale": "en-GB", "compatibility_connector": "for"},
+    "CA": {"country": "加拿大", "language": "英语", "language_code": "en", "locale": "en-CA", "compatibility_connector": "for"},
+    "MX": {"country": "墨西哥", "language": "西班牙语", "language_code": "es", "locale": "es-MX", "compatibility_connector": "para"},
+    "ES": {"country": "西班牙", "language": "西班牙语", "language_code": "es", "locale": "es-ES", "compatibility_connector": "para"},
+    "BR": {"country": "巴西", "language": "葡萄牙语", "language_code": "pt", "locale": "pt-BR", "compatibility_connector": "para"},
+    "DE": {"country": "德国", "language": "德语", "language_code": "de", "locale": "de-DE", "compatibility_connector": "für"},
+    "FR": {"country": "法国", "language": "法语", "language_code": "fr", "locale": "fr-FR", "compatibility_connector": "pour"},
+    "IT": {"country": "意大利", "language": "意大利语", "language_code": "it", "locale": "it-IT", "compatibility_connector": "per"}
+  },
+  "profiles": {
+    "production": {
+      "text": {
+        "provider": "deepseek",
+        "credential": "deepseek_main",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash",
+        "fallbacks": [
+          {
+            "provider": "deepseek",
+            "credential": "deepseek_main",
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-v4-pro"
+          }
+        ]
+      },
+      "vision": {
+        "provider": "agnes",
+        "credential": "agnes_main",
+        "base_url": "https://apihub.agnes-ai.cn",
+        "model": "agnes-2.0-flash",
+        "fallbacks": [
+          {
+            "provider": "ollama",
+            "credential": "agnes_main",
+            "base_url": "http://127.0.0.1:11434",
+            "model": "qwen3-vl:4b-instruct-q4_K_M"
+          },
+          {
+            "provider": "agnes",
+            "credential": "agnes_main",
+            "base_url": "https://apihub.agnes-ai.cn",
+            "model": "agnes-2.5-flash"
+          }
+        ]
+      },
+      "image": {
+        "provider": "agnes",
+        "credential": "agnes_main",
+        "base_url": "https://apihub.agnes-ai.cn",
+        "model": "agnes-image-2.1-flash",
+        "params": {
+          "size": "1K",
+          "ratio": "1:1"
+        },
+        "fallbacks": [
+          {
+            "provider": "agnes",
+            "credential": "agnes_main",
+            "base_url": "https://apihub.agnes-ai.cn",
+            "model": "agnes-image-2.0-flash"
+          },
+          {
+            "provider": "gpt",
+            "credential": "gpt_image_proxy",
+            "base_url": "https://www.hfsyapi.cn",
+            "model": "gpt-image-2"
+          }
+        ]
+      }
+    }
+  },
+  "runtime": {
+    "text_concurrency": 100,
+    "review_concurrency": 15,
+    "review_batch_size": 3,
+    "max_rows": 0,
+    "max_input_rows": 10000,
+    "agnes_503_retry_limit": 1,
+    "agnes_503_backoff_min_s": 3,
+    "agnes_503_backoff_max_s": 8,
+    "agnes_503_circuit_threshold": 3,
+    "agnes_503_circuit_cooldown_s": 120,
+    "adaptive_failure_rate": 0.25,
+    "adaptive_recovery_batches": 3,
+    "circuit_failure_threshold": 8,
+    "circuit_cooldown_s": 60
+  }
+}

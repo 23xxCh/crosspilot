@@ -1,0 +1,30 @@
+Review every indexed e-commerce image independently.
+
+Return JSON only in this exact envelope:
+{
+  "results": [
+    {
+      "index": 1,
+      "status": "safe" | "risk" | "unknown",
+      "reasons": [
+        "brand_logo" |
+        "seller_watermark" |
+        "person" |
+        "non_product_text" |
+        "non_english_product_text"
+      ],
+      "placement": "none" | "overlay" | "product_surface" | "packaging" | "background" | "unknown",
+      "detected_text": ["visible words, if any"],
+      "confidence": 0.0,
+      "evidence": "short factual visual evidence"
+    }
+  ]
+}
+
+Include exactly one result for every IMAGE_INDEX, preserving index order.
+Return safe only when there is no brand, logo, watermark, person, or unrelated
+promotional text and all useful visible product information is already English.
+Return risk for brand names, logos, vehicle badges, watermarks, store or platform
+marks, URLs, people, promotional text, or non-English product information.
+Neutral English dimensions, specifications, installation labels, and technical
+captions are safe. Return unknown only when an image cannot be inspected reliably.

@@ -1,0 +1,26 @@
+Use the supplied reference image as the base image and perform a local image edit.
+
+INPUT FACTS
+- SOLD ITEM TITLE: {listing_title}
+- STANDALONE SOLD ITEM: {standalone_item}
+- IMAGE ROLE: {image_role}
+- EDIT POLICY: {edit_policy}
+- EDIT STRATEGY: {edit_strategy}
+- TARGET IMAGE LOCALE: {target_locale}
+- DETECTED TEXT: {detected_text_json}
+- RISK ELEMENTS: {risk_categories_json}
+- REVIEW EVIDENCE: {review_evidence}
+- PREVIOUS REJECTION: {previous_rejection}
+
+REFERENCE-PRESERVING LOCAL EDIT
+When EDIT STRATEGY is precise, make the smallest possible local edit only. Do not redesign, rebuild, recrop, recolor, replace, rearrange, or simplify the product. Preserve product geometry, count, layout, angle, crop, background, color, material, lighting, shadows, and texture.
+
+EDIT TARGETS
+Use DETECTED TEXT, RISK ELEMENTS, and REVIEW EVIDENCE to locate only the confirmed areas that require editing. If PREVIOUS REJECTION is not empty, correct that defect and do not repeat it.
+
+POLICY RULES
+1. When EDIT POLICY is main_zero_text, apply the MAIN IMAGE ZERO-TEXT RULE: remove every visible letter, word, number, dimension, model marking, specification, label, brand name, vehicle emblem, logo, watermark, seller or store name, URL, marketplace mark, QR code, promotional label, and pseudo-text. Do not translate or keep existing English text. Inpaint only the affected local areas with matching color, texture, and material. The output must contain no visible text or text-like marks.
+2. When EDIT POLICY is main_localized, apply the MAIN IMAGE LOCALIZED EDIT RULE: remove brand names, vehicle emblems, logos, watermarks, seller or store names, URLs, platform marks, QR codes, prices, promotional labels, and pseudo-text. Do not delete neutral functional feature labels such as dimensions, material, color, compatibility, installation, function, 360 Rotation, Before/After, and installation steps. Treat DETECTED TEXT as product information text to translate into TARGET IMAGE LOCALE in the same visual area unless it is a prohibited mark.
+3. When EDIT POLICY is attachment_localized, remove brand names, vehicle emblems, logos, watermarks, seller or store names, URLs, marketplace marks, prices, and promotional labels. Keep existing target-language product information unchanged. Translate Chinese or other non-local product information into TARGET IMAGE LOCALE in the same visual area. Never leave source glyphs, partial words, or copied source characters visible.
+
+Fill removed areas with matching local color, texture, and material. Use a white patch only when the original local surface is white. Do not create pseudo-text, new labels, fake logos, new model numbers, new brands, unrelated text, people, hands, vehicles, or extra components. Words such as car or vehicle in the title indicate compatibility only; never draw the compatible vehicle.

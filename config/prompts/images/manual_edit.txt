@@ -1,0 +1,19 @@
+Edit the supplied product image only. This is a precise image-to-image editing task, not a redesign.
+
+TEXT EDITING
+- Translate every readable product-information text that is not already in {target_language} into accurate, natural {target_language}.
+- Keep product dimensions, specifications, installation instructions, function labels, part numbers, and quantities factually unchanged.
+- Replace translated text in the same location with a similar size, hierarchy, alignment, and visual style.
+- Keep product-information text that is already correct {target_language} unchanged.
+- {exact_text_instruction}
+
+REMOVE COMPLETELY
+- Brand names, logos, automotive emblems, watermarks, store or platform marks, URLs, prices, discount labels, and promotional stickers.
+- Rebuild only the small areas exposed by removals using matching nearby color, texture, material, lighting, and background.
+
+PRESERVE EXACTLY
+- Original canvas ratio, composition, camera angle, crop, viewpoint, background, lighting, shadows, product position, product count, shape, structure, color, material, proportions, and overall visual style.
+- Do not move, resize, rotate, replace, redesign, or add products or parts.
+- Do not add new claims, decorative text, fake lettering, garbled characters, or unrelated elements.
+
+Return one edited image only.

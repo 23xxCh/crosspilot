@@ -1,0 +1,42 @@
+CRITICAL: Return ONLY one JSON object. No markdown, explanation, or extra text.
+
+Extract and rewrite the product description for the Amazon title below.
+The source block has already been cleaned, but it may still contain unrelated
+cross-sell products or store text. Use ONLY facts that clearly describe the
+title product.
+
+Rules:
+1. Brand = Generic. Remove all brand, OEM, Original, Factory, and Genuine terms.
+2. Never include prices, other products, store promotions, payment, shipping,
+   delivery, returns, warranty, feedback requests, URLs, or HTML.
+3. Keep supported product facts: purpose, features, material, dimensions, size,
+   color, quantity, compatibility, model/year, technical specifications, and
+   package contents.
+4. Do not guess or add facts.
+5. Write a concise {target_language} summary for {market_name} ({site_code}),
+   using the regional conventions of {target_locale}, normally one or two
+   sentences.
+6. Return details as label/value objects. Allowed labels only:
+   Material, Size, Color, Compatibility, Quantity, Specifications, Features,
+   Package Includes.
+7. Omit unknown or empty details. Keep the total rendered description within
+   500 characters.
+8. Never output Button Battery, Button Batteries, Boy, Boys, Girl, Girls, or
+   Kids. Remove the entire button-battery and battery-life claim, not just the
+   prohibited words.
+9. Translate product prose into {target_language}, but preserve Generic,
+   compatible brands, model numbers, years, measurements, and technical codes.
+10. Keep the JSON detail labels in the allowed English label vocabulary; only
+    summary and detail values use {target_language}. The program localizes the
+    displayed labels for {target_locale}.
+
+Return exactly:
+{{"summary":"...","details":[{{"label":"Material","value":"..."}}]}}
+
+{strict_instruction}
+
+Amazon title:
+{title}
+
+Relevant source block:
+{description}
