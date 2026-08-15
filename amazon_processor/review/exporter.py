@@ -79,10 +79,7 @@ def _pipeline_provider_metrics(run_metrics: dict | None) -> dict:
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 from io import BytesIO
-import os
-from pathlib import Path
 import re
-import shutil
 import threading
 from urllib.parse import urlparse
 import requests
@@ -261,7 +258,6 @@ def build_quarantine_rows(quarantine_products: list[dict], mapping: dict[str, di
             'quarantine_reasons': item.get('reasons') or [],
         })
     return rows
-from pathlib import Path
 from ..providers import reload_provider
 from ..schema import AMAZON_JSON_OUTPUT_FIELDS, validate_columnar_payload
 from .html import render_html

@@ -281,8 +281,24 @@ Invoke-WebRequest `
 
 ```powershell
 uv sync --group dev
-uv run pytest -q
+uv run ruff check amazon_processor tests
+uv run pyright
+uv run python -m pytest --cov=amazon_processor --cov-fail-under=75 -q
 ```
 
 测试覆盖 JSON 契约、文本规则、图片安全、Provider 回退、完整管道、
-终审包与审核决定。
+终审包与审核决定。GitHub CI 同样执行 Ruff、Pyright 和最低 75% 覆盖率门禁。
+
+无人值守队列可以在完全不调用 Provider 的情况下做故障注入压测：
+
+```powershell
+# 开发机短测
+uv run python -m amazon_processor soak --cycles 1000
+
+# 服务器 24 小时稳定性测试（报告不包含密钥）
+uv run python -m amazon_processor soak --cycles 0 --duration-hours 24 `
+  --interval-seconds 1 --report ".runtime\soak\24小时稳定性报告.json"
+```
+
+压测只使用系统临时目录，模拟重复投放、运行中断、状态损坏和受理状态未写完；
+不会读取生产收件箱、覆盖正式结果或产生文本、审图、生图费用。

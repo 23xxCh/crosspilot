@@ -9,10 +9,21 @@ import threading
 
 import pytest
 
-from amazon_processor import api_server, server_worker
+from amazon_processor import api_jobs, api_server, server_worker, system_status
 
 
 API_KEY = "test_" + "a" * 32
+
+
+def test_status_interface_remains_available_from_api_server() -> None:
+    assert api_server.system_overview is system_status.system_overview
+    assert api_server.format_system_overview is system_status.format_system_overview
+
+
+def test_job_service_interface_remains_available_from_api_server() -> None:
+    assert api_server.JobAPIService is api_jobs.JobAPIService
+    assert api_server.APIRequestError is api_jobs.APIRequestError
+    assert api_server.load_client_api_key is api_jobs.load_client_api_key
 
 
 @pytest.fixture(autouse=True)

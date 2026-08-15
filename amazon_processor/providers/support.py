@@ -174,7 +174,7 @@ class CongestionGate:
         with self._lock:
             return {'failures': self._failures, 'opened_until': self._opened_until, 'half_open_probe': self._half_open_probe}
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Optional
 from ..images.risk import assessment_from_legacy
 
 class ModelProvider(ABC):

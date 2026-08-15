@@ -89,8 +89,16 @@ Amazon日常操作/                  操作员收件箱、静态状态页和友�
 | Agnes拥堵、回退、熔断 | `providers/agnes.py`、`providers/composite.py` | `test_agnes_congestion.py` |
 | 配置、密钥、Prompt | `config/`、`config/manager.html` | `test_config_management.py` |
 | 正式发布、异常隔离、终审包 | `delivery.py`、`review/` | `test_amazon_runtime.py`、`test_review_package.py` |
-| Worker重启、重试或磁盘治理 | `server_worker.py` | `test_server_worker.py` |
-| 任务 API | `api_server.py` | `test_job_api.py` |
+| Worker队列、尝试路径、幂等受理和状态恢复 | `server_jobs.py` | `test_server_jobs.py`、`test_server_worker.py`、`test_server_soak.py` |
+| 正式结果验收、待审核重试判定、任务快照和操作员交付修复 | `server_delivery.py` | `test_server_delivery.py`、`test_server_worker.py`、`test_operator_workspace.py` |
+| Worker启动预检、运行进度心跳和健康判定 | `server_health.py` | `test_server_health.py`、`test_server_worker.py`、`test_system_doctor.py` |
+| Worker接单/暂停控制、状态转换、退避和终止决策 | `server_state.py` | `test_server_state.py`、`test_server_worker.py` |
+| 子进程监督、超时、日志脱敏和故障分类 | `server_process.py` | `test_server_process.py`、`test_server_worker.py` |
+| 缓存、日志、历史输入和交付保留策略 | `server_retention.py` | `test_server_retention.py`、`test_server_worker.py` |
+| Worker执行、重试或磁盘治理 | `server_worker.py` | `test_server_worker.py` |
+| 任务提交、契约校验、幂等状态和交付物定位 | `api_jobs.py` | `test_job_api.py` |
+| HTTP鉴权、路由、限流响应和文件下载 | `api_server.py` | `test_job_api.py` |
+| 系统状态汇总和中文展示 | `system_status.py` | `test_job_api.py`、`test_system_doctor.py` |
 | 人工审核决定 | `review/decisions.py` | `test_amazon_review_decisions.py` |
 
 ## 4. 配置的唯一来源
@@ -157,10 +165,21 @@ Windows 短暂占用 `heartbeat.json` 时，Worker 会自动重试状态写入�
 git status --short
 codegraph explore "process_json 到 deliver 的调用链"
 uv run python -m pytest tests/test_amazon_pipeline.py -q
-uv run python -m pytest -q
+uv run ruff check amazon_processor tests
+uv run pyright
+uv run python -m pytest --cov=amazon_processor --cov-fail-under=75 -q
+uv run python -m amazon_processor soak --cycles 1000
 python -m amazon_processor worker-status
 python -m amazon_processor system-status
 ```
+
+CI 采用渐进式门禁：Ruff 检查运行时错误、未定义/未使用符号和常见 bug；
+Pyright 先覆盖已经加固的服务模块；测试覆盖率不得低于 75%。不要为了让门禁通过而
+批量忽略错误，应在每次修改相关模块时逐步扩大类型检查范围。
+
+`soak` 是隔离的离线故障注入工具，不导入业务流水线或 Provider。长时间测试使用
+`--cycles 0 --duration-hours 24 --interval-seconds 1`；报告中
+`provider_requests` 必须为 0，且 `invariant_failures` 必须为 0。
 
 ## 8. 不要做的事
 

@@ -41,9 +41,17 @@
 - 图片规则、缓存、生成：`amazon_processor/images/`
 - Provider 与错误分类：`amazon_processor/providers/`
 - 输出、隔离、终审包：`amazon_processor/delivery.py`、`amazon_processor/review/`
-- 无人值守 Worker：`amazon_processor/server_worker.py`
+- 无人值守队列、尝试路径、幂等受理与状态恢复：`amazon_processor/server_jobs.py`
+- 正式结果验收、任务快照、操作员交付与历史交付修复：`amazon_processor/server_delivery.py`
+- Worker启动预检、运行进度心跳和健康判定：`amazon_processor/server_health.py`
+- Worker循环控制、状态转换、退避与终止决策：`amazon_processor/server_state.py`
+- 子进程监督、超时和故障分类：`amazon_processor/server_process.py`
+- 缓存、日志和历史交付保留策略：`amazon_processor/server_retention.py`
+- 无人值守 Worker执行、重试与磁盘治理：`amazon_processor/server_worker.py`
 - 操作员静态状态页与友好交付：`amazon_processor/operator_workspace.py`
-- 任务 API：`amazon_processor/api_server.py`
+- 任务提交、状态与交付物服务：`amazon_processor/api_jobs.py`
+- 任务 API HTTP适配：`amazon_processor/api_server.py`
+- 系统状态汇总与中文展示：`amazon_processor/system_status.py`
 - 配置中心：`amazon_processor/config/`、`config/manager.html`
 
 ## 测试与交付标准

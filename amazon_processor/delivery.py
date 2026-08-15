@@ -17,7 +17,7 @@ from .quality import (
 from .review.exporter import export_review
 from .runtime import RunContext, RunResult
 from .schema import AMAZON_JSON_OUTPUT_FIELDS, write_output_json
-from .config.env import get
+from .config.env import get  # noqa: F401 - compatibility patch point
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

@@ -124,6 +124,7 @@ def _valid_translation(source: dict, value: dict | None) -> bool:
         for source_item, translated_item in zip(
             source['bullets'],
             bullets,
+            strict=True,
         )
     ):
         return False

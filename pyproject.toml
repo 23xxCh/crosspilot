@@ -17,7 +17,12 @@ build-backend = "hatchling.build"
 packages = ["amazon_processor"]
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+dev = [
+    "pyright>=1.1.400",
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "ruff>=0.12",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -27,3 +32,32 @@ markers = [
     "slow: tests that take more than 10 seconds",
 ]
 addopts = "-m 'not network'"
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E9", "F", "B"]
+
+[tool.pyright]
+include = [
+  "amazon_processor/api_jobs.py",
+  "amazon_processor/api_server.py",
+  "amazon_processor/server_jobs.py",
+  "amazon_processor/server_delivery.py",
+  "amazon_processor/server_health.py",
+  "amazon_processor/server_process.py",
+  "amazon_processor/server_retention.py",
+  "amazon_processor/server_state.py",
+  "amazon_processor/operator_workspace.py",
+  "amazon_processor/system_status.py",
+  "amazon_processor/system_doctor.py",
+]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+
+[tool.coverage.run]
+source = ["amazon_processor"]
+
+[tool.coverage.report]
+fail_under = 75

@@ -6,7 +6,7 @@
   metrics = PipelineMetrics()
   metrics.record_stage("review", 12.5, 100)
 """
-import sys, os, time, json, uuid, traceback as _tb, glob as _glob
+import sys, os, time, json, uuid, traceback as _tb
 
 
 _LOG_DIR = os.path.join(

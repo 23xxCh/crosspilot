@@ -294,7 +294,6 @@ def load_confirmed_image_quarantine() -> dict[str, dict[str, str]]:
         return {}
     return {str(product_id): {'reason': str((item or {}).get('reason') or ''), 'source': str((item or {}).get('source') or '')} for product_id, item in products.items() if isinstance(item, dict)}
 from io import BytesIO
-from typing import Any
 import requests
 from ..log import log as _log
 from ..providers.support import (

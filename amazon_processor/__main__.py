@@ -196,6 +196,32 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="只检查，不尝试启动已安装的后台任务",
     )
+    soak = subcommands.add_parser(
+        "soak",
+        help="离线注入队列故障，验证无人值守恢复能力",
+    )
+    soak.add_argument(
+        "--cycles",
+        type=int,
+        default=100,
+        help="执行轮数；设为 0 时仅按持续时间运行",
+    )
+    soak.add_argument(
+        "--duration-hours",
+        type=float,
+        default=0.0,
+        help="持续运行小时数，例如 24；默认只按轮数运行",
+    )
+    soak.add_argument(
+        "--interval-seconds",
+        type=float,
+        default=0.0,
+        help="每轮间隔秒数，长时间测试建议设为 1",
+    )
+    soak.add_argument(
+        "--report",
+        help="可选的 JSON 报告保存路径",
+    )
     return parser
 
 
@@ -228,8 +254,6 @@ def main(argv: list[str] | None = None) -> int:
                 once=args.once,
             )
         if args.command == "worker-status":
-            import json
-
             from .server_worker import worker_health
 
             health = worker_health(max(1.0, args.max_age_seconds))
@@ -250,8 +274,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if args.command == "api-status":
-            import json
-
             from .api_server import api_health_check
 
             health = api_health_check(
@@ -261,8 +283,6 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(health, ensure_ascii=False, indent=2))
             return 0
         if args.command == "system-status":
-            import json
-
             from .api_server import format_system_overview, system_overview
 
             overview = system_overview()
@@ -280,6 +300,17 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(format_report(report))
             return 0 if report.get("healthy") else 2
+        if args.command == "soak":
+            from .server_soak import run_soak
+
+            report = run_soak(
+                cycles=max(0, args.cycles),
+                duration_seconds=max(0.0, args.duration_hours) * 3600,
+                interval_seconds=max(0.0, args.interval_seconds),
+                report_path=Path(args.report) if args.report else None,
+            )
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report["passed"] else 2
         if args.command == "run":
             result = process_json(
                 Path(args.input),

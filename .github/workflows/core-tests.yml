@@ -19,9 +19,13 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install core and test dependencies
-        run: python -m pip install -e . pytest
-      - name: Run offline contract and regression tests
-        run: python -m pytest -q
+        run: python -m pip install -e . pytest pytest-cov pyright ruff
+      - name: Lint runtime errors and bug patterns
+        run: python -m ruff check amazon_processor tests
+      - name: Type-check hardened service modules
+        run: python -m pyright
+      - name: Run offline tests with coverage gate
+        run: python -m pytest --cov=amazon_processor --cov-report=term --cov-fail-under=75 -q
       - name: Parse Windows unattended scripts
         if: runner.os == 'Windows'
         shell: pwsh

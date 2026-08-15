@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-from typing import Any
 
 from ..schema import (
     AMAZON_JSON_OUTPUT_FIELDS,
