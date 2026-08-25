@@ -837,3 +837,73 @@ def test_operator_delivery_failure_retries_packaging_without_rerunning_child(
     assert len(child_calls) == 1
     assert len(publish_calls) == 2
     assert second.operator_delivery_path == str(tmp_path / "operator-result")
+
+
+def test_worker_exception_after_publish_does_not_clobber_terminal_state(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A late failure in process_one must not regress a published job.
+
+    process_one persists the terminal state before writing the delivery
+    snapshot and health heartbeat; if one of those later steps raises (for
+    example a full disk), the loop's exception handler used to overwrite the
+    durable published state with the stale pre-run object, re-queueing the
+    job and rerunning the paid pipeline.
+    """
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    source = inbox / "input.json"
+    source.write_text("{}", encoding="utf-8")
+    jobs_root = tmp_path / "jobs"
+    monkeypatch.setattr(server_worker, "JOBS_ROOT", jobs_root)
+    monkeypatch.setattr(server_worker, "LOGS_ROOT", tmp_path / "logs")
+    monkeypatch.setattr(server_worker, "WORKER_LOCK", tmp_path / "worker.lock")
+    monkeypatch.setattr(server_worker, "_disk_free_gb", lambda *_args: 100.0)
+    monkeypatch.setattr(server_worker, "_maintenance_enabled", lambda: False)
+    monkeypatch.setattr(server_worker, "reconcile_jobs", lambda **_kwargs: [])
+    monkeypatch.setattr(server_worker, "run_retention", lambda **_kwargs: {})
+    monkeypatch.setattr(server_worker, "repair_operator_deliveries", lambda: 0)
+    monkeypatch.setattr(
+        server_worker,
+        "preflight",
+        lambda _path: {
+            "input_dir": str(inbox),
+            "image_processing_mode": "select_existing",
+            "free_disk_gb": 100.0,
+            "missing_operations": [],
+            "blocker_reason": "",
+        },
+    )
+
+    def process_one_publishes_then_raises(_source, **_kwargs):
+        state = server_worker.accept_input(
+            _source,
+            accepted_root=tmp_path / "accepted",
+        )
+        state.status = "published"
+        state.stage = "completed"
+        state.attempt = 1
+        state.finished_at = server_worker._utc_now()
+        server_worker._save_state(state)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(
+        server_worker,
+        "process_one",
+        process_one_publishes_then_raises,
+    )
+
+    code = server_worker.run_worker(
+        input_dir=inbox,
+        stable_seconds=0,
+        once=True,
+        max_retries=0,
+    )
+
+    assert code == 0
+    states = list(jobs_root.glob("*.json"))
+    assert len(states) == 1
+    final = json.loads(states[0].read_text(encoding="utf-8"))
+    assert final["status"] == "published"
+    assert final["stage"] == "completed"

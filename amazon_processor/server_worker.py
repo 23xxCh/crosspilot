@@ -872,6 +872,13 @@ def run_worker(
                         retry_terminal=retry_terminal,
                     )
                 except Exception as exc:
+                    # process_one may have persisted a terminal state before
+                    # raising (e.g. a disk error while writing the delivery
+                    # snapshot).  Re-read the durable state so a late failure
+                    # cannot clobber a finished job and rerun paid processing.
+                    saved = _load_state(current.sha256)
+                    if saved and saved.status in TERMINAL_STATUSES:
+                        continue
                     current.status = "retry_wait"
                     current.stage = "recovering"
                     current.failure_kind = "internal"
