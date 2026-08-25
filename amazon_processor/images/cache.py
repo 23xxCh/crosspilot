@@ -20,14 +20,8 @@ from ..policy import IMAGE_POLICY_VERSION
 
 
 _CACHE_LOCK = threading.Lock()
-IMAGE_PROVIDER_ROUTING_VERSION = "localized-main-text-preservation-v4"
-
-
-def current_cache_versions() -> tuple[str, str, str]:
-    """Return signatures that invalidate stale review and generation data."""
-    from ..config.env import get
-
-    generated_review_mode = get("GENERATED_IMAGE_REVIEW_MODE", "strict")
+def current_cache_versions() -> tuple[str, str]:
+    """Return signatures that invalidate stale DeepSeek review data."""
     review_version = build_runtime_signature(
         f"{IMAGE_POLICY_VERSION}:{IMAGE_RISK_POLICY_VERSION}",
         "images.risk_assessment",
@@ -39,19 +33,7 @@ def current_cache_versions() -> tuple[str, str, str]:
         "images.main_text_free_review",
         "images.main_text_free_review_batch",
     )
-    generation_version = build_runtime_signature(
-        (
-            f"{IMAGE_POLICY_VERSION}:{IMAGE_RISK_POLICY_VERSION}:"
-            f"generated_review={generated_review_mode}:"
-            f"provider_routing={IMAGE_PROVIDER_ROUTING_VERSION}"
-        ),
-        "images.main_product",
-        "images.main_product_reference_free",
-        "images.variant",
-        "images.listing_context",
-        "images.edit_request",
-    )
-    return review_version, main_text_version, generation_version
+    return review_version, main_text_version
 
 
 def is_current_assessment(value: object) -> bool:
@@ -77,7 +59,6 @@ def load_cache(
     cache_path: str | None,
     review_version: str,
     main_text_version: str,
-    generation_version: str,
 ) -> dict[str, Any]:
     """Load compatible cache sections and invalidate stale policy results."""
     raw: dict[str, Any] = {}
@@ -114,25 +95,14 @@ def load_cache(
             if is_current_main_text_assessment(value)
             and str(value.get("status") or "") != "unknown"
         }
-    generation_is_current = raw.get("gen_prompt_version") == generation_version
     return {
         "risk_prompt_version": review_version,
         "main_text_prompt_version": main_text_version,
-        "gen_prompt_version": generation_version,
         "image_policy_version": IMAGE_POLICY_VERSION,
         "image_risk_policy_version": IMAGE_RISK_POLICY_VERSION,
         "risk_assessments": assessments,
         "risk_confirmations": confirmations,
         "main_text_assessments": main_text_assessments,
-        "gen_results": (
-            dict(raw.get("gen_results") or {}) if generation_is_current else {}
-        ),
-        "gen_meta": (
-            dict(raw.get("gen_meta") or {}) if generation_is_current else {}
-        ),
-        "gen_failures": (
-            dict(raw.get("gen_failures") or {}) if generation_is_current else {}
-        ),
     }
 
 
@@ -148,7 +118,6 @@ def save_cache(cache_path: str | None, cache: dict[str, Any]) -> None:
             "main_text_prompt_version": cache[
                 "main_text_prompt_version"
             ],
-            "gen_prompt_version": cache["gen_prompt_version"],
             "image_policy_version": cache["image_policy_version"],
             "image_risk_policy_version": cache["image_risk_policy_version"],
             "risk_assessments": dict(cache["risk_assessments"]),
@@ -156,9 +125,6 @@ def save_cache(cache_path: str | None, cache: dict[str, Any]) -> None:
             "main_text_assessments": dict(
                 cache["main_text_assessments"]
             ),
-            "gen_results": dict(cache["gen_results"]),
-            "gen_meta": dict(cache["gen_meta"]),
-            "gen_failures": dict(cache["gen_failures"]),
         }
         temp_path = f"{cache_path}.{os.getpid()}.{threading.get_ident()}.tmp"
         try:

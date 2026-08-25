@@ -7,6 +7,7 @@ import re
 
 from ..config.prompts import get_prompt_registry
 from ..providers import (
+    ProviderAuthError,
     ProviderQuotaError,
     get_provider as _default_get_provider,
 )
@@ -146,7 +147,7 @@ def generate_bullets_keywords(
                         parsed.get("keywords", ""),
                         parsed.get("subtitle", ""),
                     )
-        except QuotaExhaustedError:
+        except (ProviderAuthError, QuotaExhaustedError):
             raise
         except Exception as exc:
             _log.warn(
@@ -167,7 +168,7 @@ def generate_bullets_keywords(
         for future in as_completed(futures):
             try:
                 index, bullets, keywords, subtitle = future.result()
-            except QuotaExhaustedError:
+            except (ProviderAuthError, QuotaExhaustedError):
                 for pending in futures:
                     pending.cancel()
                 raise
@@ -235,7 +236,7 @@ def generate_bullets_keywords(
             for future in as_completed(futures):
                 try:
                     index, bullets, keywords, subtitle = future.result()
-                except QuotaExhaustedError:
+                except (ProviderAuthError, QuotaExhaustedError):
                     for pending in futures:
                         pending.cancel()
                     raise

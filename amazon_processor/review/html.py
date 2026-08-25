@@ -628,7 +628,7 @@ function buildReviewedRefill(){{
  const items=Object.values(decisions);
  const rechecks=items.filter(item=>item.action==='recheck_main_candidate');
  if(rechecks.length){{
-   throw new Error('存在 '+rechecks.length+' 条重新审查主图资格决定。请先导出审核决定并使用 00_常用入口\\02_应用审核结果.bat。');
+   throw new Error('存在 '+rechecks.length+' 条重新审查主图资格决定。请先导出审核决定，再让 Agent 执行 amazon_processor apply。');
  }}
  const output=JSON.parse(JSON.stringify(embeddedFormalPayload));
  const deleteIds=new Set(items.filter(item=>item.action==='delete_product').map(item=>String(item.product_id)));

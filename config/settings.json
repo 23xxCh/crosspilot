@@ -4,14 +4,6 @@
     "deepseek_main": {
       "label": "DeepSeek 主线路",
       "env": "DEEPSEEK_KEY"
-    },
-    "agnes_main": {
-      "label": "Agnes 主线路",
-      "env": "AGNES_KEY"
-    },
-    "gpt_image_proxy": {
-      "label": "GPT Image 中转线路",
-      "env": "GPT_IMAGE_KEY"
     }
   },
   "active_profile": "production",
@@ -43,48 +35,11 @@
         ]
       },
       "vision": {
-        "provider": "agnes",
-        "credential": "agnes_main",
-        "base_url": "https://apihub.agnes-ai.cn",
-        "model": "agnes-2.0-flash",
-        "fallbacks": [
-          {
-            "provider": "ollama",
-            "credential": "agnes_main",
-            "base_url": "http://127.0.0.1:11434",
-            "model": "qwen3-vl:4b-instruct-q4_K_M"
-          },
-          {
-            "provider": "agnes",
-            "credential": "agnes_main",
-            "base_url": "https://apihub.agnes-ai.cn",
-            "model": "agnes-2.5-flash"
-          }
-        ]
-      },
-      "image": {
-        "provider": "agnes",
-        "credential": "agnes_main",
-        "base_url": "https://apihub.agnes-ai.cn",
-        "model": "agnes-image-2.1-flash",
-        "params": {
-          "size": "1K",
-          "ratio": "1:1"
-        },
-        "fallbacks": [
-          {
-            "provider": "agnes",
-            "credential": "agnes_main",
-            "base_url": "https://apihub.agnes-ai.cn",
-            "model": "agnes-image-2.0-flash"
-          },
-          {
-            "provider": "gpt",
-            "credential": "gpt_image_proxy",
-            "base_url": "https://www.hfsyapi.cn",
-            "model": "gpt-image-2"
-          }
-        ]
+        "provider": "deepseek",
+        "credential": "deepseek_main",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash-vision-exp",
+        "fallbacks": []
       }
     }
   },
@@ -94,11 +49,6 @@
     "review_batch_size": 3,
     "max_rows": 0,
     "max_input_rows": 10000,
-    "agnes_503_retry_limit": 1,
-    "agnes_503_backoff_min_s": 3,
-    "agnes_503_backoff_max_s": 8,
-    "agnes_503_circuit_threshold": 3,
-    "agnes_503_circuit_cooldown_s": 120,
     "adaptive_failure_rate": 0.25,
     "adaptive_recovery_batches": 3,
     "circuit_failure_threshold": 8,

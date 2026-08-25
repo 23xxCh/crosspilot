@@ -3,12 +3,12 @@
 .env.*
 !.env.example
 keys.json
-agnes_key.txt
 
 # Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
 .venv/
 
 # Runtime and delivery
@@ -22,7 +22,7 @@ Amazon日常操作/
 01_输入采集表/
 跨境电商自动化采集表*.json
 
-# Local AI models
+# Historical local model files kept outside the active Skill
 04_本地审图模型/
 
 # Local tools

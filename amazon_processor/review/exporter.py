@@ -330,7 +330,7 @@ def export_review(input_path: str | Path, output_dir: str | Path, *, translate_w
         ),
         'image_failures': image_failures,
         # Keep the old field for compatibility, while exposing a clear
-        # stage-by-stage view for operators and the status manifest.
+        # stage-by-stage view for the Agent result and status manifest.
         'provider_metrics': provider_metrics,
         'provider_metrics_by_stage': {
             'pipeline': _pipeline_provider_metrics(run_metrics),

@@ -41,17 +41,15 @@ select = ["E9", "F", "B"]
 
 [tool.pyright]
 include = [
-  "amazon_processor/api_jobs.py",
-  "amazon_processor/api_server.py",
-  "amazon_processor/server_jobs.py",
-  "amazon_processor/server_delivery.py",
-  "amazon_processor/server_health.py",
-  "amazon_processor/server_process.py",
-  "amazon_processor/server_retention.py",
-  "amazon_processor/server_state.py",
-  "amazon_processor/operator_workspace.py",
-  "amazon_processor/system_status.py",
-  "amazon_processor/system_doctor.py",
+  "amazon_processor/config/credentials.py",
+  "amazon_processor/config/env.py",
+  "amazon_processor/config/models.py",
+  "amazon_processor/config/prompts.py",
+  "amazon_processor/providers/support.py",
+  "amazon_processor/providers/deepseek.py",
+  "amazon_processor/providers/composite.py",
+  "amazon_processor/providers/factory.py",
+  "scripts/process_amazon_json.py",
 ]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"

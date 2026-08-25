@@ -75,19 +75,9 @@ AMAZON_REVIEW_CONCURRENCY = configured_concurrency(
     100,
     maximum=150,
 )
-AMAZON_IMAGE_GEN_CONCURRENCY = configured_concurrency(
-    "image_gen",
-    20,
-    maximum=40,
-)
-AMAZON_IMAGE_GEN_ATTEMPTS = 1
-
-
 __all__ = [
     "AMAZON_BULLET_CONCURRENCY",
     "AMAZON_DESC_CONCURRENCY",
-    "AMAZON_IMAGE_GEN_ATTEMPTS",
-    "AMAZON_IMAGE_GEN_CONCURRENCY",
     "AMAZON_REVIEW_CONCURRENCY",
     "AMAZON_TITLE_CONCURRENCY",
     "BRAND_RE",

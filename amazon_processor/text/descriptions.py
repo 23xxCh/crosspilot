@@ -8,6 +8,7 @@ import re
 
 from ..config.prompts import get_prompt_registry
 from ..providers import (
+    ProviderAuthError,
     ProviderQuotaError,
     get_provider as _default_get_provider,
 )
@@ -589,7 +590,7 @@ def clean_descriptions(data, progress=None, provider_getter=None):
                     ),
                     max_tokens=3000,
                 )
-            except QuotaExhaustedError:
+            except (ProviderAuthError, QuotaExhaustedError):
                 raise
             except Exception as exc:
                 _log.warn(
@@ -643,7 +644,7 @@ def clean_descriptions(data, progress=None, provider_getter=None):
                     method,
                     missing,
                 ) = future.result()
-            except QuotaExhaustedError:
+            except (ProviderAuthError, QuotaExhaustedError):
                 for pending in futures:
                     pending.cancel()
                 raise

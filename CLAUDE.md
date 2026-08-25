@@ -1,8 +1,5 @@
-# Claude Code 项目入口
+# Agent entry
 
-请先完整阅读 [AGENTS.md](AGENTS.md)，它是本项目的维护约束和不可破坏契约。
+Read [SKILL.md](SKILL.md), [AGENTS.md](AGENTS.md), and [docs/Agent维护与排障指南.md](docs/Agent维护与排障指南.md) before changing this project.
 
-需要定位模块、复现故障或修改无人值守流程时，再阅读
-[docs/Agent维护与排障指南.md](docs/Agent维护与排障指南.md)。
-
-若 `.codegraph/` 存在，理解调用链时优先使用 `codegraph explore`。不要在没有用户明确授权时调用付费模型。
+This is an Agent Skill, not a Windows server. Use `scripts/process_amazon_json.py` for one explicit input file. Do not run paid DeepSeek calls without explicit user authorization.

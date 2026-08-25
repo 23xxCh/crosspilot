@@ -1,9 +1,7 @@
 """Model provider clients, routing, configuration, and typed errors."""
 
 from .support import ModelProvider
-from .agnes import AgnesProvider
 from .composite import CompositeProvider
-from .support import CongestionGate, CongestionPolicy
 from .deepseek import DeepSeekProvider
 from .support import (
     ProviderAuthError,
@@ -23,16 +21,11 @@ from .factory import (
     reload_keys,
     reload_provider,
 )
-from .gpt_image import GPTImageProvider
 
 __all__ = [
     "ModelProvider",
     "DeepSeekProvider",
-    "AgnesProvider",
-    "GPTImageProvider",
     "CompositeProvider",
-    "CongestionGate",
-    "CongestionPolicy",
     "ProviderError",
     "ProviderAuthError",
     "ProviderCircuitOpenError",

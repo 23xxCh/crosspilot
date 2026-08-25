@@ -15,7 +15,7 @@ _LOG_DIR = os.path.join(
     'logs',
 )
 os.makedirs(_LOG_DIR, exist_ok=True)
-_LOG_PATH = os.path.join(_LOG_DIR, 'server.log')
+_LOG_PATH = os.path.join(_LOG_DIR, 'processor.log')
 _MAX_LOG_SIZE = 10 * 1024 * 1024  # 10 MB
 _MAX_LOG_FILES = 3
 

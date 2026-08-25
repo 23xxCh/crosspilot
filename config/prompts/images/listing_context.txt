@@ -1,3 +1,0 @@
-LISTING CONTEXT: {context}
-
-The named product is the sold item. Treat any vehicle, wheel, fixture, or installation scene only as context; do not invent it as part of the product.

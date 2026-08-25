@@ -111,7 +111,7 @@ class CredentialStore:
 
     def missing_routes(self) -> list[str]:
         missing: list[str] = []
-        for operation in ("text", "vision", "image"):
+        for operation in ("text", "vision"):
             for index, target in enumerate(self.registry.routes(operation)):
                 if not self.value(target.credential):
                     route = "主线路" if index == 0 else f"备用线路 {index}"

@@ -162,7 +162,11 @@ def normalize_amazon_title(title: str) -> str:
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 from ..config.prompts import get_prompt_registry
-from ..providers import ProviderQuotaError, get_provider as _default_get_provider
+from ..providers import (
+    ProviderAuthError,
+    ProviderQuotaError,
+    get_provider as _default_get_provider,
+)
 from ..log import log as _log
 from ..quality import AMAZON_TITLE_CONCURRENCY, add_audit as _add_audit, add_quality_issue as _add_quality_issue, missing_factual_markers as _missing_factual_markers, unexpected_brand_markers as _unexpected_brand_markers
 from .locale import market_prompt_values, normalize_localized_title
@@ -203,7 +207,7 @@ def optimize_titles(data, progress=None, provider_getter=None):
                 )
                 if result:
                     return (index, result.strip())
-            except QuotaExhaustedError:
+            except (ProviderAuthError, QuotaExhaustedError):
                 raise
             except Exception as exc:
                 _log.warn('标题优化异常', error=str(exc))
@@ -214,7 +218,7 @@ def optimize_titles(data, progress=None, provider_getter=None):
             for future in as_completed(futures):
                 try:
                     index, new_title = future.result()
-                except QuotaExhaustedError:
+                except (ProviderAuthError, QuotaExhaustedError):
                     for pending in futures:
                         pending.cancel()
                     raise

@@ -1,1 +1,0 @@
-Remove every person and all human presence from the image, including models, faces, heads, hands, arms, legs, feet, bodies, silhouettes, reflections, mannequins, and people depicted in the background or printed graphics. Reconstruct any product area hidden by a person so the product remains complete and realistic. Do not add any person, mannequin, or human body part.

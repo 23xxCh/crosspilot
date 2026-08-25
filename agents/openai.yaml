@@ -1,0 +1,6 @@
+interface:
+  display_name: "Amazon JSON Processor"
+  short_description: "Amazon 采集表审图、本地化并导出 14 字段回填表"
+  default_prompt: "处理用户提供的 Amazon 采集表 JSON，验证并返回回填表、终审包和异常摘要。"
+policy:
+  allow_implicit_invocation: true

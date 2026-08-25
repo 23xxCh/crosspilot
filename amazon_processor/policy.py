@@ -1,14 +1,7 @@
 """Amazon 文案与图片处理共用的确定性业务策略。"""
 import re
 
-from .config.prompts import get_prompt_registry
-
-
-IMAGE_POLICY_VERSION = 'reference_edit_text_translate_v1'
-
-_prompts = get_prompt_registry()
-PERSON_REMOVAL_INSTRUCTION = _prompts.get("images.person_removal")
-IMAGE_REMEDIATION_REVIEW_PROMPT = _prompts.get("images.review")
+IMAGE_POLICY_VERSION = 'deepseek_review_select_existing_v2'
 
 # 可作为“适配品牌”保留在标题 for 后面的真实厂商品牌。
 # 键统一为小写，值是标题中的规范写法。

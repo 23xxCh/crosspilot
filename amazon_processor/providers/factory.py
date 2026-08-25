@@ -24,34 +24,9 @@ def load_provider_config() -> dict[str, Any]:
                 }
                 for target in registry.routes(operation)
             ]
-            for operation in ("text", "vision", "image")
+            for operation in ("text", "vision")
         }
     }
-    from ..config.env import load_config
-
-    cfg = load_config()
-    mapping = {
-            "AGNES_503_RETRY_LIMIT": "agnes_503_retry_limit",
-            "AGNES_503_BACKOFF_MIN_S": (
-                "agnes_503_backoff_min_s"
-            ),
-            "AGNES_503_BACKOFF_MAX_S": (
-                "agnes_503_backoff_max_s"
-            ),
-            "AGNES_503_CIRCUIT_THRESHOLD": (
-                "agnes_503_circuit_threshold"
-            ),
-            "AGNES_503_CIRCUIT_COOLDOWN_S": (
-                "agnes_503_circuit_cooldown_s"
-            ),
-            "CIRCUIT_FAILURE_THRESHOLD": (
-                "circuit_failure_threshold"
-            ),
-            "CIRCUIT_COOLDOWN_S": "circuit_cooldown_s",
-    }
-    for source, target in mapping.items():
-        if cfg.get(source):
-            config[target] = cfg[source]
     return config
 
 
@@ -80,7 +55,7 @@ def get_provider() -> CompositeProvider:
                 raise ValueError(
                     "以下模型线路未配置 API 密钥: "
                     + ", ".join(missing)
-                    + "。请双击 00_常用入口\\03_配置与模型.bat。"
+                    + "。请在项目根目录 .env 中填写 DEEPSEEK_KEY。"
                 )
             _provider = CompositeProvider(_KEYS)
         return _provider

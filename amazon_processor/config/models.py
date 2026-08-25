@@ -16,13 +16,12 @@ from urllib.parse import urlsplit
 DEFAULT_MODEL_CONFIG_PATH = (
     Path(__file__).resolve().parents[2] / "config" / "settings.json"
 )
-OPERATIONS = ("text", "vision", "image")
+OPERATIONS = ("text", "vision")
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _PROVIDERS_BY_OPERATION = {
-    "text": {"deepseek", "agnes"},
-    "vision": {"agnes", "ollama"},
-    "image": {"agnes", "gpt"},
+    "text": {"deepseek"},
+    "vision": {"deepseek"},
 }
 
 
@@ -306,12 +305,10 @@ class ModelRegistry:
         """Export values used to construct the configured Providers."""
         text = self.target("text")
         vision = self.target("vision")
-        image = self.target("image")
         config = {
             "MODEL_PROFILE": self.profile_name,
             "TEXT_PROVIDER": text.provider,
             "VISION_PROVIDER": vision.provider,
-            "IMAGE_PROVIDER": image.provider,
         }
 
         if text.provider == "deepseek":
@@ -324,41 +321,11 @@ class ModelRegistry:
                 config["DEEPSEEK_TEXT_FALLBACK_MODEL"] = (
                     text_fallbacks[0].model
                 )
-        elif text.provider == "agnes":
+        if vision.provider == "deepseek":
             config.update({
-                "AGNES_TEXT_BASE_URL": text.base_url,
-                "AGNES_TEXT_MODEL": text.model,
+                "DEEPSEEK_VISION_BASE_URL": vision.base_url,
+                "DEEPSEEK_VISION_MODEL": vision.model,
             })
-
-        if vision.provider == "agnes":
-            config.update({
-                "AGNES_VISION_BASE_URL": vision.base_url,
-                "AGNES_VISION_MODEL": vision.model,
-            })
-            config.setdefault("AGNES_TEXT_BASE_URL", vision.base_url)
-            config.setdefault("AGNES_TEXT_MODEL", vision.model)
-
-        if image.provider == "agnes":
-            config.update({
-                "AGNES_IMAGE_BASE_URL": image.base_url,
-                "AGNES_BASE_URL": image.base_url,
-                "AGNES_IMAGE_MODEL": image.model,
-            })
-        elif image.provider == "gpt":
-            config.update({
-                "GPT_IMAGE_BASE_URL": image.base_url,
-                "GPT_IMAGE_MODEL": image.model,
-            })
-
-        for fallback in self.fallbacks("image"):
-            if (
-                fallback.provider == "agnes"
-                and "AGNES_IMAGE_FALLBACK_MODEL" not in config
-            ):
-                config["AGNES_IMAGE_FALLBACK_MODEL"] = fallback.model
-            elif fallback.provider == "gpt":
-                config.setdefault("GPT_IMAGE_BASE_URL", fallback.base_url)
-                config.setdefault("GPT_IMAGE_MODEL", fallback.model)
         return config
 
 

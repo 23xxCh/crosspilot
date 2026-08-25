@@ -168,15 +168,6 @@ def _process_json_unlocked(
         runtime_metrics=context.runtime_metrics,
         provider_getter=get_provider,
     )
-    generated_urls = {
-        str(image.get("url") or "")
-        for row in context.data
-        for image in row.get("_image_assessments") or []
-        if image.get("source") == "generated" and image.get("url")
-    }
-    context.runtime_metrics["image_deduplication"][
-        "unique_generated_images"
-    ] = len(generated_urls)
     image_rejected = list(
         context.runtime_metrics.get("image_rejected_products") or []
     )

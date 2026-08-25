@@ -10,6 +10,7 @@ from amazon_processor.images.risk import (
     parse_image_assessment_batch_response,
     parse_main_text_assessment_response,
 )
+from amazon_processor.providers import ProviderAuthError, ProviderUnavailableError
 
 
 def assessment(status: str, *, reasons=None, evidence="test") -> dict:
@@ -41,7 +42,6 @@ class Provider:
         self.main = main
         self.general_calls: list[str] = []
         self.main_calls: list[str] = []
-        self.gen_calls: list[str] = []
 
     def assess_image(self, url: str, *, confirmation=False, policy="general"):
         del confirmation
@@ -50,10 +50,6 @@ class Provider:
             return self.main.get(url)
         self.general_calls.append(url)
         return self.general.get(url)
-
-    def call_image_gen(self, url: str, **_kwargs):
-        self.gen_calls.append(url)
-        raise AssertionError("formal pipeline must never call image generation")
 
 
 def run_gate(rows: list[dict], provider: Provider, tmp_path: Path):
@@ -125,7 +121,6 @@ def test_all_roles_are_reviewed_once_and_risk_unknown_are_deleted(tmp_path) -> N
     assert result[0]["var_imgs"] == ["safe-var"]
     assert set(provider.general_calls) == set(urls)
     assert len(provider.general_calls) == len(urls)
-    assert provider.gen_calls == []
     assert metrics["image_safety_gate"]["generation_requests"] == 0
 
 
@@ -218,6 +213,44 @@ def test_cached_review_avoids_repeated_provider_calls(tmp_path) -> None:
     run_gate([row(extras=["extra"])], second, tmp_path)
     assert second.general_calls == []
     assert second.main_calls == []
+
+
+def test_operational_unknown_stops_run_instead_of_deleting_product(tmp_path) -> None:
+    class UnavailableProvider(Provider):
+        def assess_image(self, url: str, *, confirmation=False, policy="general"):
+            del url, confirmation, policy
+            raise ProviderUnavailableError(
+                "temporary",
+                provider="deepseek",
+                operation="vision",
+            )
+
+    provider = UnavailableProvider({}, {})
+    try:
+        run_gate([row(extras=["extra"])], provider, tmp_path)
+    except ProviderUnavailableError as exc:
+        assert exc.retryable is True
+    else:
+        raise AssertionError("operational image failure must stop publication")
+
+
+def test_image_auth_failure_stops_immediately(tmp_path) -> None:
+    class AuthFailureProvider(Provider):
+        def assess_image(self, url: str, *, confirmation=False, policy="general"):
+            del url, confirmation, policy
+            raise ProviderAuthError(
+                "invalid credential",
+                provider="deepseek",
+                operation="vision",
+            )
+
+    provider = AuthFailureProvider({}, {})
+    try:
+        run_gate([row(extras=["extra"])], provider, tmp_path)
+    except ProviderAuthError as exc:
+        assert exc.retryable is False
+    else:
+        raise AssertionError("authentication failure must stop immediately")
 
 
 def test_formal_gate_has_no_generation_entrypoint() -> None:

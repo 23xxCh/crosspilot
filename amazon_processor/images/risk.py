@@ -297,6 +297,7 @@ from io import BytesIO
 import requests
 from ..log import log as _log
 from ..providers.support import (
+    ProviderAuthError,
     ProviderQuotaError,
     ProviderTimeoutError,
     ProviderUnavailableError,
@@ -357,7 +358,7 @@ def safe_assess(
             )
         else:
             value = provider.assess_image(url, confirmation=confirmation)
-    except ProviderQuotaError:
+    except (ProviderAuthError, ProviderQuotaError):
         raise
     except Exception as exc:
         _log.warn('结构化图审异常', error=str(exc)[:100])
@@ -401,7 +402,7 @@ def safe_assess_batch(
         return [safe_assess(provider, url, policy=policy) for url in urls]
     try:
         values = method(urls, policy=policy)
-    except ProviderQuotaError:
+    except (ProviderAuthError, ProviderQuotaError):
         raise
     except (ProviderTimeoutError, ProviderUnavailableError) as exc:
         _log.warn("批量结构化图审暂不可用", error=str(exc)[:100])

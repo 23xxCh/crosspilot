@@ -1,9 +1,8 @@
 """Review-only image safety gate for the formal Amazon pipeline.
 
 The formal pipeline audits source images, deletes unsafe or unresolved images,
-and selects an eligible source image as the main image.  It never calls an
-image-generation provider.  Manual image generation remains isolated in the
-Agnes image lab.
+and selects an eligible source image as the main image. It never calls an
+image-generation provider.
 """
 from __future__ import annotations
 
@@ -11,7 +10,11 @@ from collections import defaultdict
 from typing import Any, Callable
 
 from ..concurrency import adaptive_map
-from ..providers.support import ProviderQuotaError
+from ..providers.support import (
+    ProviderAuthError,
+    ProviderQuotaError,
+    ProviderUnavailableError,
+)
 from ..quality import AMAZON_REVIEW_CONCURRENCY
 from .cache import (
     current_cache_versions,
@@ -116,7 +119,7 @@ def _review_source_images(
             and all(assessment_status(item) != "unknown" for item in value)
         ),
         on_result=assess_done,
-        terminal_exceptions=(ProviderQuotaError,),
+        terminal_exceptions=(ProviderAuthError, ProviderQuotaError),
         backoff_s=2,
         max_backoff_s=15,
     )
@@ -177,7 +180,7 @@ def _review_main_candidates(
             and all(assessment_status(item) != "unknown" for item in value)
         ),
         on_result=assess_done,
-        terminal_exceptions=(ProviderQuotaError,),
+        terminal_exceptions=(ProviderAuthError, ProviderQuotaError),
         backoff_s=2,
         max_backoff_s=15,
     )
@@ -224,12 +227,11 @@ def run_structured_image_safety_gate(
     quality_issues = quality_issues if quality_issues is not None else []
     runtime_metrics = runtime_metrics if isinstance(runtime_metrics, dict) else {}
     concurrency_stats = runtime_metrics.setdefault("concurrency", {})
-    review_version, main_version, generation_version = current_cache_versions()
+    review_version, main_version = current_cache_versions()
     cache = load_cache(
         cache_path,
         review_version,
         main_version,
-        generation_version,
     )
     assessments = cache["risk_assessments"]
     main_assessments = cache["main_text_assessments"]
@@ -252,6 +254,18 @@ def run_structured_image_safety_gate(
         concurrency_stats=concurrency_stats,
         progress=progress,
     )
+    source_failures = [
+        url
+        for url, value in assessments.items()
+        if assessment_status(value) == "unknown"
+        and value.get("operational_failure")
+    ]
+    if source_failures:
+        raise ProviderUnavailableError(
+            f"DeepSeek 仍有 {len(source_failures)} 张源图未完成审查",
+            provider="deepseek",
+            operation="vision",
+        )
 
     candidate_urls: list[str] = []
     for product_id, row in row_by_id.items():
@@ -274,6 +288,18 @@ def run_structured_image_safety_gate(
         provider_getter=provider_getter,
         concurrency_stats=concurrency_stats,
     )
+    main_failures = [
+        url
+        for url in candidate_urls
+        if assessment_status(main_assessments.get(url)) == "unknown"
+        and bool((main_assessments.get(url) or {}).get("operational_failure"))
+    ]
+    if main_failures:
+        raise ProviderUnavailableError(
+            f"DeepSeek 仍有 {len(main_failures)} 张主图候选未完成审查",
+            provider="deepseek",
+            operation="vision",
+        )
 
     rejected: list[dict[str, Any]] = []
     attachment_rejected: list[dict[str, Any]] = []

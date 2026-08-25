@@ -31,15 +31,9 @@ def _read_runtime() -> dict[str, str]:
     mapping = {
         "text_concurrency": "TEXT_CONCURRENCY",
         "review_concurrency": "REVIEW_CONCURRENCY",
+        "review_batch_size": "REVIEW_BATCH_SIZE",
         "max_rows": "MAX_ROWS",
         "max_input_rows": "MAX_INPUT_ROWS",
-        "agnes_503_retry_limit": "AGNES_503_RETRY_LIMIT",
-        "agnes_503_backoff_min_s": "AGNES_503_BACKOFF_MIN_S",
-        "agnes_503_backoff_max_s": "AGNES_503_BACKOFF_MAX_S",
-        "agnes_503_circuit_threshold": "AGNES_503_CIRCUIT_THRESHOLD",
-        "agnes_503_circuit_cooldown_s": (
-            "AGNES_503_CIRCUIT_COOLDOWN_S"
-        ),
         "adaptive_failure_rate": "ADAPTIVE_FAILURE_RATE",
         "adaptive_recovery_batches": "ADAPTIVE_RECOVERY_BATCHES",
         "circuit_failure_threshold": "CIRCUIT_FAILURE_THRESHOLD",
@@ -48,13 +42,9 @@ def _read_runtime() -> dict[str, str]:
     defaults: dict[str, Any] = {
         "text_concurrency": 100,
         "review_concurrency": 30,
+        "review_batch_size": 3,
         "max_rows": 0,
         "max_input_rows": 10_000,
-        "agnes_503_retry_limit": 1,
-        "agnes_503_backoff_min_s": 3,
-        "agnes_503_backoff_max_s": 8,
-        "agnes_503_circuit_threshold": 3,
-        "agnes_503_circuit_cooldown_s": 120,
         "adaptive_failure_rate": 0.25,
         "adaptive_recovery_batches": 3,
         "circuit_failure_threshold": 8,
