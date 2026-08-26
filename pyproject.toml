@@ -47,6 +47,7 @@ include = [
   "amazon_processor/config/prompts.py",
   "amazon_processor/providers/support.py",
   "amazon_processor/providers/deepseek.py",
+  "amazon_processor/images/download.py",
   "amazon_processor/providers/composite.py",
   "amazon_processor/providers/factory.py",
   "scripts/process_amazon_json.py",

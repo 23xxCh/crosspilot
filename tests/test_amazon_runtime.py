@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
 from amazon_processor import delivery
 from amazon_processor.config.models import ModelRegistry
 from amazon_processor.config.prompts import PromptRegistry
@@ -365,6 +367,50 @@ def test_publish_replaces_files_when_latest_directory_is_open(
     assert (latest / "图片" / "one.jpg").read_bytes() == b"image"
     assert not (latest / delivery.EXCEPTIONS_NAME).exists()
     assert not staging.exists()
+
+
+def test_publish_open_latest_rolls_back_when_one_file_replace_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    output_root = tmp_path / "02_处理结果"
+    latest = output_root / "最新"
+    runtime_root = tmp_path / ".runtime"
+    archive = output_root / "归档"
+    latest.mkdir(parents=True)
+    formal = latest / "跨境电商自动化回填表.json"
+    review = latest / delivery.REVIEW_NAME
+    formal.write_text("old-formal", encoding="utf-8")
+    review.write_text("old-review", encoding="utf-8")
+    staging = runtime_root / "staging" / "new"
+    staging.mkdir(parents=True)
+    (staging / formal.name).write_text("new-formal", encoding="utf-8")
+    (staging / review.name).write_text("new-review", encoding="utf-8")
+    monkeypatch.setattr(delivery, "LATEST_DIR", latest)
+    monkeypatch.setattr(delivery, "ARCHIVE_DIR", archive)
+    monkeypatch.setattr(delivery, "RUNTIME_ROOT", runtime_root)
+    original_replace = delivery.os.replace
+    failed_once = False
+    latest_replacements = 0
+
+    def fail_second_target_once(source, target):
+        nonlocal failed_once, latest_replacements
+        if Path(source) == latest:
+            raise PermissionError("latest directory is open")
+        if Path(target).parent == latest:
+            latest_replacements += 1
+            if latest_replacements == 2 and not failed_once:
+                failed_once = True
+                raise PermissionError("review file is open")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(delivery.os, "replace", fail_second_target_once)
+
+    with pytest.raises(PermissionError, match="review file is open"):
+        delivery._publish(staging)
+
+    assert formal.read_text(encoding="utf-8") == "old-formal"
+    assert review.read_text(encoding="utf-8") == "old-review"
 
 
 def test_prompt_and_model_edits_change_cache_signatures(tmp_path) -> None:

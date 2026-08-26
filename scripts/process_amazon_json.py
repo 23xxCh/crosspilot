@@ -16,6 +16,8 @@ from amazon_processor import process_json
 from amazon_processor.providers import ProviderError
 from amazon_processor.schema import (
     AMAZON_JSON_OUTPUT_FIELDS,
+    load_rows,
+    prepare_input_copy,
     validate_columnar_payload,
 )
 
@@ -103,6 +105,78 @@ def read_run_metrics(review_path: Path) -> dict[str, Any]:
     return {"provider": {}, "image_safety": {}}
 
 
+def verify_published_result(
+    source: Path,
+    result: Any,
+    metrics: dict[str, Any],
+) -> dict[str, int]:
+    """Verify artifacts and exact input/output row identity before success."""
+    required_artifacts = {
+        "回填表": result.output_path,
+        "终审包": result.review_path,
+        "审核数据": result.review_data_path,
+    }
+    for label, value in required_artifacts.items():
+        path = Path(value) if value else None
+        if path is None or not path.is_file():
+            raise ValueError(f"{label}不存在，拒绝报告发布成功")
+    if result.exception_path:
+        exception_path = Path(result.exception_path)
+        if not exception_path.is_file():
+            raise ValueError("异常商品清单路径存在但文件缺失")
+
+    review_data = load_json(Path(result.review_data_path))
+    if not isinstance(review_data, dict):
+        raise ValueError("审核数据不是有效对象")
+    validation = verify_output(Path(result.output_path))
+    payload = load_json(Path(result.output_path))
+
+    normalized_source, _warnings = prepare_input_copy(
+        source,
+        runtime_root=AGENT_RUNS.parent,
+    )
+    input_rows = load_rows(normalized_source)
+    input_ids = [str(row.get("id") or "") for row in input_rows]
+    input_id_set = set(input_ids)
+    problem_ids = [str(value) for value in payload["有问题的产品id"]]
+    isolated_ids = [str(value) for value in result.isolated_product_ids]
+    unknown_ids = sorted(
+        (set(problem_ids) | set(isolated_ids)) - input_id_set
+    )
+    if unknown_ids:
+        raise ValueError(
+            "问题或隔离商品 ID 不属于输入采集表: "
+            + ", ".join(unknown_ids[:10])
+        )
+    expected_problem_ids = [
+        product_id for product_id in input_ids if product_id in set(problem_ids)
+    ]
+    if problem_ids != expected_problem_ids:
+        raise ValueError("有问题的产品id未保持输入顺序")
+
+    excluded = set(problem_ids) | set(isolated_ids)
+    expected_rows = [
+        row
+        for row in input_rows
+        if str(row.get("id") or "") not in excluded
+    ]
+    expected_ids = [str(row.get("id") or "") for row in expected_rows]
+    expected_sites = [str(row.get("site") or "US") for row in expected_rows]
+    if payload["商品id"] != expected_ids:
+        raise ValueError("正式回填表商品 ID 或顺序与输入采集表不一致")
+    if payload["产品站点"] != expected_sites:
+        raise ValueError("正式回填表产品站点或顺序与输入采集表不一致")
+    if int(result.retained_products) != len(expected_ids):
+        raise ValueError("RunResult 保留商品数与正式回填表不一致")
+
+    image_stats = metrics.get("image_safety")
+    if not isinstance(image_stats, dict) or "generation_requests" not in image_stats:
+        raise ValueError("运行结果缺少生图请求指标")
+    if int(image_stats.get("generation_requests") or 0) != 0:
+        raise ValueError("正式流水线出现生图请求，拒绝发布")
+    return validation
+
+
 def run(
     input_path: Path,
     *,
@@ -117,8 +191,10 @@ def run(
     result_path = AGENT_RUNS / f"{stamp}_{before_hash[:8]}" / "result.json"
     started_at = time.time()
     last_error: Exception | None = None
+    attempts_used = 0
 
     for attempt in range(1, max(1, attempts) + 1):
+        attempts_used = attempt
         try:
             result = process_json(source, unattended=True)
             if sha256_file(source) != before_hash:
@@ -139,8 +215,8 @@ def run(
                 }
                 atomic_json(result_path, payload)
                 return 2, result_path
-            validation = verify_output(result.output_path)
             metrics = read_run_metrics(result.review_path)
+            validation = verify_published_result(source, result, metrics)
             payload = {
                 "version": 1,
                 "status": "published",
@@ -188,7 +264,7 @@ def run(
         "input_path": str(source),
         "input_sha256": before_hash,
         "elapsed_s": round(time.time() - started_at, 3),
-        "attempts": max(1, attempts),
+        "attempts": max(1, attempts_used),
         "failure": failure,
     })
     return 1, result_path

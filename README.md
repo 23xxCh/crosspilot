@@ -13,17 +13,33 @@
 
 项目不再包含 Windows 服务器、Worker、任务 API、定时任务、状态网页、Agnes、Ollama、GPT Image 或图片生成流程。
 
-## 第一次使用
+## 一键安装（Windows）
 
-1. 安装 [uv](https://docs.astral.sh/uv/) 和 Python 3.11+。
-2. 复制 `.env.example` 为 `.env`，只填写：
+打开 PowerShell，复制并执行这一条命令：
 
-   ```dotenv
-   DEEPSEEK_KEY=你的官方DeepSeek密钥
-   ```
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/23xxCh/crosspilot/main/scripts/install_from_github.ps1' | iex"
+```
 
-3. 运行 `安装Amazon处理Skill.bat`，把当前项目以目录链接注册到 `%USERPROFILE%\.codex\skills\amazon-json-processor`。
-4. 向 Agent 提供采集表绝对路径，并要求“处理这个 Amazon 采集表”。
+该命令会把项目安装或更新到 `%LOCALAPPDATA%\AmazonJsonProcessor`，自动准备 `uv` 和 Python 依赖，并注册为 `%USERPROFILE%\.codex\skills\amazon-json-processor`。要求电脑已安装 [Git for Windows](https://git-scm.com/download/win)；已有安装存在未提交修改时会安全停止，不会覆盖。
+
+安装完成后，只需打开 `%LOCALAPPDATA%\AmazonJsonProcessor\.env`，填写：
+
+```dotenv
+DEEPSEEK_KEY=你的官方DeepSeek密钥
+```
+
+然后重启 Codex，向 Agent 提供采集表绝对路径，并要求“处理这个 Amazon 采集表”。
+
+### 已下载项目的安装方式
+
+如果别人拿到的是完整项目文件夹，在该目录打开 PowerShell 后执行：
+
+```powershell
+uv sync --frozen; powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_skill.ps1
+```
+
+也可以直接双击 `安装Amazon处理Skill.bat` 注册 Skill，但仍需自行执行 `uv sync --frozen` 准备依赖。
 
 Agent 实际执行：
 
@@ -69,6 +85,10 @@ Agent 入口另写入 `.runtime\agent_runs\<时间戳_输入哈希>\result.json`
 - Prompt 正文：`config/prompts/**/*.txt`。
 
 模型或 Prompt 修改后会改变缓存签名；旧 Agnes 缓存不会被新 DeepSeek 配置误用。
+
+## 更新
+
+再次执行上方“一键安装”命令即可从 GitHub `main` 快进更新。更新脚本不会覆盖 `.env`；如果本地代码有修改，它会停止并提示先保存修改。
 
 ## 代码入口
 

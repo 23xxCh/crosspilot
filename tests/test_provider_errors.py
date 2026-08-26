@@ -8,6 +8,7 @@ from PIL import Image
 import pytest
 import requests
 
+from amazon_processor.images.download import DownloadedImage, ImageDownloadError
 from amazon_processor.providers.deepseek import DeepSeekProvider
 from amazon_processor.providers.support import (
     ProviderAuthError,
@@ -75,8 +76,14 @@ def safe_assessment(index: int | None = None) -> dict:
 
 def patch_image_download(monkeypatch) -> None:
     monkeypatch.setattr(
-        "amazon_processor.providers.deepseek.requests.get",
-        lambda *_args, **_kwargs: FakeResponse(content=image_bytes()),
+        "amazon_processor.providers.deepseek.download_public_image",
+        lambda *_args, **_kwargs: DownloadedImage(
+            content=image_bytes(),
+            mime_type="image/png",
+            width=8,
+            height=8,
+            final_url="https://example.com/product.png",
+        ),
     )
 
 
@@ -168,8 +175,10 @@ def test_transient_503_retries_but_auth_and_quota_stop(monkeypatch) -> None:
 
 def test_invalid_image_and_malformed_json_are_rejected(monkeypatch) -> None:
     monkeypatch.setattr(
-        "amazon_processor.providers.deepseek.requests.get",
-        lambda *_args, **_kwargs: FakeResponse(content=b"not-image"),
+        "amazon_processor.providers.deepseek.download_public_image",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ImageDownloadError("image_decode_failed", "文件不是可解码图片")
+        ),
     )
     provider = DeepSeekProvider("secret-key")
     with pytest.raises(ProviderResponseError, match="可解码"):

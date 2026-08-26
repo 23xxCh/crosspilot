@@ -293,8 +293,6 @@ def load_confirmed_image_quarantine() -> dict[str, dict[str, str]]:
     if not isinstance(products, dict):
         return {}
     return {str(product_id): {'reason': str((item or {}).get('reason') or ''), 'source': str((item or {}).get('source') or '')} for product_id, item in products.items() if isinstance(item, dict)}
-from io import BytesIO
-import requests
 from ..log import log as _log
 from ..providers.support import (
     ProviderAuthError,
@@ -306,40 +304,17 @@ ROLE_PRIORITY = {'main': 0, 'variant': 1, 'attachment': 2}
 
 def validate_image_url(url: str, *, timeout_s: float=30, max_bytes: int=25 * 1024 * 1024) -> tuple[bool, str]:
     """Download and decode an image URL before it may enter formal output."""
-    url = str(url or '').strip()
-    if not url.startswith(('http://', 'https://')):
-        return (False, 'invalid_url')
+    from .download import ImageDownloadError, download_public_image
+
     try:
-        response = requests.get(url, timeout=max(1.0, float(timeout_s)), stream=True, headers={'User-Agent': 'AmazonProcessor/1.0'})
-        response.raise_for_status()
-        content_type = str(response.headers.get('content-type') or '').lower()
-        if content_type and 'image/' not in content_type:
-            return (False, 'non_image_content_type')
-        chunks: list[bytes] = []
-        total = 0
-        for chunk in response.iter_content(64 * 1024):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > max_bytes:
-                return (False, 'image_too_large')
-            chunks.append(chunk)
-        if not chunks:
-            return (False, 'empty_image')
-        from PIL import Image
-        with Image.open(BytesIO(b''.join(chunks))) as image:
-            image.verify()
-            if image.width < 1 or image.height < 1:
-                return (False, 'invalid_dimensions')
-        return (True, '')
-    except ImportError:
-        return (False, 'image_decoder_unavailable')
-    except requests.Timeout:
-        return (False, 'download_timeout')
-    except requests.RequestException:
-        return (False, 'download_failed')
-    except Exception:
-        return (False, 'image_decode_failed')
+        download_public_image(
+            url,
+            timeout_s=timeout_s,
+            max_bytes=max_bytes,
+        )
+    except ImageDownloadError as exc:
+        return (False, exc.code)
+    return (True, '')
 
 def safe_assess(
     provider: object,

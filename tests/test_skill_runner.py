@@ -36,6 +36,39 @@ def output_payload() -> dict:
     return payload
 
 
+def input_payload(
+    product_ids: list[str] | None = None,
+    sites: list[str] | None = None,
+) -> dict:
+    product_ids = list(product_ids or ["product-1"])
+    sites = list(sites or ["US"] * len(product_ids))
+    return {
+        "商品id": product_ids,
+        "产品站点": sites,
+        "产品标题": ["Source product"] * len(product_ids),
+        "产品描述": ["Source product description"] * len(product_ids),
+        "产品图片链接": [
+            [
+                f"https://example.com/{product_id}-main.jpg",
+                f"https://example.com/{product_id}-extra.jpg",
+            ]
+            for product_id in product_ids
+        ],
+        "变种图片链接": [[] for _product_id in product_ids],
+    }
+
+
+def write_input(
+    path: Path,
+    product_ids: list[str] | None = None,
+    sites: list[str] | None = None,
+) -> None:
+    path.write_text(
+        json.dumps(input_payload(product_ids, sites), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
 def fake_result(tmp_path: Path) -> RunResult:
     latest = tmp_path / "latest"
     latest.mkdir(parents=True, exist_ok=True)
@@ -68,14 +101,21 @@ def test_skill_metadata_and_installer_exist() -> None:
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
     installer = (ROOT / "scripts" / "install_skill.ps1").read_text(encoding="utf-8")
+    github_installer = (
+        ROOT / "scripts" / "install_from_github.ps1"
+    ).read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "name: amazon-json-processor" in skill
     assert "allow_implicit_invocation: true" in metadata
     assert "ItemType Junction" in installer
+    assert "git clone" in github_installer
+    assert "uv sync --frozen" in github_installer
+    assert "scripts/install_from_github.ps1" in readme
 
 
 def test_runner_publishes_only_after_contract_validation(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "input.json"
-    source.write_text("{}", encoding="utf-8")
+    write_input(source)
     before = runner.sha256_file(source)
     monkeypatch.setattr(runner, "AGENT_RUNS", tmp_path / "agent_runs")
     monkeypatch.setattr(runner, "process_json", lambda *_args, **_kwargs: fake_result(tmp_path))
@@ -91,7 +131,7 @@ def test_runner_publishes_only_after_contract_validation(tmp_path: Path, monkeyp
 
 def test_runner_retries_transient_failure_once(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "input.json"
-    source.write_text("{}", encoding="utf-8")
+    write_input(source)
     monkeypatch.setattr(runner, "AGENT_RUNS", tmp_path / "agent_runs")
     calls = 0
 
@@ -115,7 +155,7 @@ def test_runner_retries_transient_failure_once(tmp_path: Path, monkeypatch) -> N
 
 def test_runner_does_not_retry_auth_failure(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "input.json"
-    source.write_text("{}", encoding="utf-8")
+    write_input(source)
     monkeypatch.setattr(runner, "AGENT_RUNS", tmp_path / "agent_runs")
     calls = 0
 
@@ -131,7 +171,68 @@ def test_runner_does_not_retry_auth_failure(tmp_path: Path, monkeypatch) -> None
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     assert code == 1
     assert calls == 1
+    assert payload["attempts"] == 1
     assert payload["failure"]["type"] == "ProviderAuthError"
+
+
+def test_runner_rejects_released_id_or_site_order_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "input.json"
+    write_input(source, ["different-product"], ["DE"])
+    monkeypatch.setattr(runner, "AGENT_RUNS", tmp_path / "agent_runs")
+    monkeypatch.setattr(
+        runner,
+        "process_json",
+        lambda *_args, **_kwargs: fake_result(tmp_path),
+    )
+
+    code, result_path = runner.run(source, attempts=1, retry_delay_s=0)
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert code == 1
+    assert payload["published"] is False
+    assert "商品 ID" in payload["failure"]["detail"]
+
+
+def test_runner_rejects_missing_review_artifact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "input.json"
+    write_input(source)
+    result = fake_result(tmp_path)
+    result.review_path.unlink()
+    monkeypatch.setattr(runner, "AGENT_RUNS", tmp_path / "agent_runs")
+    monkeypatch.setattr(runner, "process_json", lambda *_args, **_kwargs: result)
+
+    code, result_path = runner.run(source, attempts=1, retry_delay_s=0)
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert code == 1
+    assert "终审包" in payload["failure"]["detail"]
+
+
+def test_runner_rejects_nonzero_generation_requests(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "input.json"
+    write_input(source)
+    result = fake_result(tmp_path)
+    status_path = result.review_path.parent / "运行状态.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    status["image_safety"]["generation_requests"] = 1
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    monkeypatch.setattr(runner, "AGENT_RUNS", tmp_path / "agent_runs")
+    monkeypatch.setattr(runner, "process_json", lambda *_args, **_kwargs: result)
+
+    code, result_path = runner.run(source, attempts=1, retry_delay_s=0)
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert code == 1
+    assert "生图请求" in payload["failure"]["detail"]
 
 
 def test_verify_output_rejects_problem_overlap(tmp_path: Path) -> None:

@@ -509,23 +509,86 @@ def _publish(staging: Path) -> Path | None:
 
 
 def _publish_open_latest_files(staging: Path) -> None:
-    """Replace published files individually when Windows keeps latest open."""
-    for optional_name in (EXCEPTIONS_NAME,):
-        if not (staging / optional_name).exists():
-            (LATEST_DIR / optional_name).unlink(missing_ok=True)
-    for source in staging.rglob("*"):
-        if not source.is_file():
-            continue
-        target = LATEST_DIR / source.relative_to(staging)
+    """Transactionally mirror staging when Windows keeps latest open."""
+    transaction = RUNTIME_ROOT / "publish_transactions" / uuid4().hex
+    backup_root = transaction / "backup"
+    LATEST_DIR.mkdir(parents=True, exist_ok=True)
+    transaction.mkdir(parents=True)
+
+    def link_or_copy(source: Path, target: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
         try:
-            shutil.copy2(source, temporary)
-            os.replace(temporary, target)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
-    shutil.rmtree(staging)
+            os.link(source, target)
+        except OSError:
+            shutil.copy2(source, target)
+
+    source_files = {
+        source.relative_to(staging): source
+        for source in staging.rglob("*")
+        if source.is_file()
+    }
+    existing_files = {
+        source.relative_to(LATEST_DIR): source
+        for source in LATEST_DIR.rglob("*")
+        if source.is_file()
+    }
+    prepared: dict[Path, Path] = {}
+    touched: list[Path] = []
+    rollback_errors: list[Exception] = []
+    try:
+        for relative, source in existing_files.items():
+            link_or_copy(source, backup_root / relative)
+        for relative, source in source_files.items():
+            target = LATEST_DIR / relative
+            temporary = target.with_name(
+                f".{target.name}.{uuid4().hex}.publish.tmp"
+            )
+            link_or_copy(source, temporary)
+            prepared[relative] = temporary
+
+        for relative in sorted(source_files, key=lambda value: str(value)):
+            target = LATEST_DIR / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(prepared[relative], target)
+            touched.append(relative)
+        obsolete = sorted(
+            set(existing_files) - set(source_files),
+            key=lambda value: str(value),
+        )
+        for relative in obsolete:
+            (LATEST_DIR / relative).unlink()
+            touched.append(relative)
+    except Exception:
+        for relative in reversed(touched):
+            target = LATEST_DIR / relative
+            backup = backup_root / relative
+            try:
+                if backup.exists():
+                    restore = target.with_name(
+                        f".{target.name}.{uuid4().hex}.rollback.tmp"
+                    )
+                    try:
+                        link_or_copy(backup, restore)
+                        os.replace(restore, target)
+                    finally:
+                        restore.unlink(missing_ok=True)
+                else:
+                    target.unlink(missing_ok=True)
+            except Exception as rollback_exc:
+                rollback_errors.append(rollback_exc)
+        if rollback_errors:
+            raise RuntimeError(
+                "正式结果发布失败且自动回滚不完整；"
+                f"恢复副本保留在 {transaction}"
+            ) from rollback_errors[0]
+        raise
+    else:
+        shutil.rmtree(staging)
+    finally:
+        for temporary in prepared.values():
+            temporary.unlink(missing_ok=True)
+        if not rollback_errors and transaction.exists():
+            shutil.rmtree(transaction)
 
 
 def deliver(

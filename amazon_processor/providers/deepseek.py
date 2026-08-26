@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import base64
-from io import BytesIO
 import time
 from typing import Any, Callable, Optional
 
-from PIL import Image
 import requests
 from requests.adapters import HTTPAdapter
 
@@ -19,6 +17,7 @@ from ..images.risk import (
     parse_main_text_assessment_batch_response,
     parse_main_text_assessment_response,
 )
+from ..images.download import ImageDownloadError, download_public_image
 from .support import (
     ModelProvider,
     ProviderAuthError,
@@ -29,14 +28,6 @@ from .support import (
     ProviderUnavailableError,
     classify_http_error,
 )
-
-
-_IMAGE_MIME = {
-    "JPEG": "image/jpeg",
-    "PNG": "image/png",
-    "GIF": "image/gif",
-    "WEBP": "image/webp",
-}
 
 
 class DeepSeekProvider(ModelProvider):
@@ -232,49 +223,31 @@ class DeepSeekProvider(ModelProvider):
     @classmethod
     def _download_image_data_url(cls, image_url: str) -> str:
         try:
-            response = requests.get(
+            image = download_public_image(
                 str(image_url),
-                timeout=30,
-                headers={"User-Agent": "AmazonProcessor/1.0"},
+                timeout_s=30,
+                max_bytes=cls.MAX_IMAGE_BYTES,
             )
-            response.raise_for_status()
-        except requests.Timeout as exc:
-            raise ProviderTimeoutError(
-                "审图源图片下载超时",
+        except ImageDownloadError as exc:
+            if exc.code == "download_timeout":
+                raise ProviderTimeoutError(
+                    "审图源图片下载超时",
+                    provider="deepseek",
+                    operation="vision",
+                ) from exc
+            if exc.retryable:
+                raise ProviderUnavailableError(
+                    "审图源图片下载失败",
+                    provider="deepseek",
+                    operation="vision",
+                ) from exc
+            raise ProviderResponseError(
+                f"审图源图片不可用：{exc}",
                 provider="deepseek",
                 operation="vision",
             ) from exc
-        except requests.RequestException as exc:
-            raise ProviderUnavailableError(
-                "审图源图片下载失败",
-                provider="deepseek",
-                operation="vision",
-            ) from exc
-        content = response.content
-        if not content or len(content) > cls.MAX_IMAGE_BYTES:
-            raise ProviderResponseError(
-                "审图源图片为空或超过 20 MiB",
-                provider="deepseek",
-                operation="vision",
-            )
-        try:
-            with Image.open(BytesIO(content)) as image:
-                image.verify()
-                mime = _IMAGE_MIME.get(str(image.format or "").upper())
-        except Exception as exc:
-            raise ProviderResponseError(
-                "审图源文件不是可解码图片",
-                provider="deepseek",
-                operation="vision",
-            ) from exc
-        if not mime:
-            raise ProviderResponseError(
-                "DeepSeek 不支持该图片格式",
-                provider="deepseek",
-                operation="vision",
-            )
-        encoded = base64.b64encode(content).decode("ascii")
-        return f"data:{mime};base64,{encoded}"
+        encoded = base64.b64encode(image.content).decode("ascii")
+        return f"data:{image.mime_type};base64,{encoded}"
 
     @staticmethod
     def _vision_content(
